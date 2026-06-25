@@ -21,4 +21,4 @@
 
 #define FEATURE_SAFE_BOOT 1
 
-#define FIRMWARE_VERSION "v0.1.3b"
+#define FIRMWARE_VERSION "v0.1.6-single-key"

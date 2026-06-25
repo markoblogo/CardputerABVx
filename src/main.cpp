@@ -32,35 +32,101 @@ constexpr uint8_t kSdCs = 12;
 constexpr uint32_t kSdSpeeds[] = {400000UL, 1000000UL, 4000000UL, 10000000UL, 25000000UL};
 constexpr uint32_t kBootHeartbeatMs = 2000;
 constexpr uint32_t kBtnLongPressMs = 700;
+constexpr uint32_t kKeyDebounceMs = 100;
+
+enum class UltraScreenMode : uint8_t {
+  BootDiag,
+  LauncherTest,
+};
 
 uint32_t g_lastHeartbeatMs = 0;
 bool g_btnDown = false;
 uint32_t g_btnDownAtMs = 0;
 bool g_btnLongHandled = false;
+UltraScreenMode g_screenMode = UltraScreenMode::BootDiag;
+uint32_t g_lastKeyPressMs = 0;
+char g_lastHandledKey = '\0';
+bool g_keyHeld = false;
+String g_sdStatus = "SD: not tested";
 
-void drawSafeBootScreen(const String& line5, const String& line6) {
+void drawBootDiagScreen(const String& sdStatus, const String& hintLine) {
   M5Cardputer.Display.fillScreen(0x0000);
   M5Cardputer.Display.setTextSize(1);
   M5Cardputer.Display.setTextColor(0xFFFF, 0x0000);
   M5Cardputer.Display.setCursor(8, 8);
   M5Cardputer.Display.println("CARDPUTER ABVx");
-  M5Cardputer.Display.println("v0.1.3b SAFE BOOT");
+  M5Cardputer.Display.println("v0.1.6 SAFE BOOT");
   M5Cardputer.Display.println("Serial: OK");
   M5Cardputer.Display.println("Display: OK");
-  M5Cardputer.Display.println(line5.c_str());
+  M5Cardputer.Display.println(sdStatus.c_str());
   M5Cardputer.Display.setTextColor(0xFFE0, 0x0000);
-  M5Cardputer.Display.println(line6.c_str());
-  M5Cardputer.Display.println("1: input test");
-  M5Cardputer.Display.println("2: launcher later");
+  M5Cardputer.Display.println(hintLine.c_str());
+  M5Cardputer.Display.println("1: launcher test");
+}
+
+void drawLauncherTestScreen() {
+  M5Cardputer.Display.fillScreen(0x0000);
+  M5Cardputer.Display.setTextSize(1);
+  M5Cardputer.Display.setTextColor(0xFFFF, 0x0000);
+  M5Cardputer.Display.setCursor(8, 8);
+  M5Cardputer.Display.println("CARDPUTER ABVx");
+  M5Cardputer.Display.println("LAUNCHER TEST");
+  M5Cardputer.Display.setTextColor(0x07FF, 0x0000);
+  M5Cardputer.Display.println("This is only a static screen.");
+  M5Cardputer.Display.setTextColor(0xFFE0, 0x0000);
+  M5Cardputer.Display.println("0/B: back");
+}
+
+char detectUltraSafeKey() {
+  auto keys = M5Cardputer.Keyboard.keysState();
+  for (uint8_t i = 0; i < sizeof(keys.word); ++i) {
+    const char c = static_cast<char>(keys.word[i]);
+    if (c == 0 || c == '\n' || c == '\r' || c == '\t') {
+      continue;
+    }
+    if (c == '1' || c == '0' || c == 'b' || c == 'B') {
+      return c;
+    }
+    return '\0';
+  }
+  return '\0';
+}
+
+void applyUltraSafeKeyAction(char key) {
+  if (key == '\0') {
+    return;
+  }
+
+  if (key == 'B') {
+    key = 'b';
+  }
+  Serial.print("[KEY] ");
+  Serial.println(key);
+  Serial.flush();
+
+  if (g_screenMode == UltraScreenMode::BootDiag && key == '1') {
+    g_screenMode = UltraScreenMode::LauncherTest;
+    Serial.println("[SCREEN] LauncherTest");
+    Serial.flush();
+    drawLauncherTestScreen();
+    return;
+  }
+
+  if (g_screenMode == UltraScreenMode::LauncherTest && (key == '0' || key == 'b')) {
+    g_screenMode = UltraScreenMode::BootDiag;
+    Serial.println("[SCREEN] BootDiag");
+    Serial.flush();
+    drawBootDiagScreen(g_sdStatus, "GO: test SD");
+  }
 }
 
 void testSdFromBoot() {
   Serial.println("[BOOT] GO pressed, testing SD");
   Serial.flush();
   bool ok = false;
-  String status = "SD: not tested";
+  String status = g_sdStatus;
 
-  drawSafeBootScreen("SD: testing...", "GO: test SD");
+  drawBootDiagScreen("SD: testing...", "GO: test SD");
   M5Cardputer.Display.setCursor(8, 72);
   M5Cardputer.Display.setTextColor(0x07FF, 0x0000);
   M5Cardputer.Display.println("testing... hold still");
@@ -99,7 +165,8 @@ void testSdFromBoot() {
   if (!ok) {
     status = "SD: failed";
   }
-  drawSafeBootScreen(status, "GO: test SD");
+  g_sdStatus = status;
+  drawBootDiagScreen(status, "GO: test SD");
 }
 }  // namespace
 #endif
@@ -192,7 +259,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println();
-  Serial.println("[BOOT] 000 setup entered v0.1.3b ultra-safe");
+  Serial.println("[BOOT] 000 setup entered v0.1.6-single-key ultra-safe");
   Serial.flush();
   Serial.println("[BOOT] 010 before M5Cardputer.begin");
   Serial.flush();
@@ -202,7 +269,7 @@ void setup() {
   Serial.println("[BOOT] 020 M5Cardputer.begin done");
   Serial.flush();
 
-  drawSafeBootScreen("SD: not tested", "GO: test SD");
+  drawBootDiagScreen("SD: not tested", "GO: test SD");
   Serial.println("[BOOT] 030 safe boot screen rendered");
   Serial.flush();
 
@@ -248,7 +315,20 @@ void setup() {
 void loop() {
 #if FEATURE_ULTRA_SAFE_BOOT
   M5Cardputer.update();
-  M5Cardputer.Keyboard.isChange();
+  if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed() && !g_keyHeld) {
+    const uint32_t nowKey = millis();
+    const char key = detectUltraSafeKey();
+    if (key != '\0' && (key != g_lastHandledKey) && (nowKey - g_lastKeyPressMs >= kKeyDebounceMs)) {
+      g_lastKeyPressMs = nowKey;
+      g_lastHandledKey = key;
+      g_keyHeld = true;
+      applyUltraSafeKeyAction(key);
+    }
+  } else if (!M5Cardputer.Keyboard.isPressed()) {
+    g_lastHandledKey = '\0';
+    g_keyHeld = false;
+  }
+
   const uint32_t now = millis();
 
   if (now - g_lastHeartbeatMs >= kBootHeartbeatMs) {
