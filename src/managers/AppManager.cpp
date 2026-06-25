@@ -1,10 +1,17 @@
 #include "AppManager.h"
+#include "StorageManager.h"
+#include "Features.h"
 
 #include "TerminalUI.h"
 #include "InputManager.h"
 
+static bool isPressOrRepeat(const InputEvent& event) {
+  return event.type == InputEventType::Press || event.type == InputEventType::Repeat;
+}
+
 void AppManager::begin(AppContext& context) {
   ctx_ = &context;
+  safeMode_ = FEATURE_SAFE_BOOT != 0;
 }
 
 void AppManager::add(App* app) {
@@ -14,13 +21,28 @@ void AppManager::add(App* app) {
 }
 
 void AppManager::update() {
-  if (active_ >= 0) apps_[active_]->update();
+  if (active_ < 0) return;
+  if (active_ >= count_ || !apps_[active_]) {
+    Serial.println("[AppManager] invalid active app, returning to launcher");
+    active_ = -1;
+    selected_ = 0;
+    return;
+  }
+  apps_[active_]->update();
 }
 
 void AppManager::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   const uint32_t now = millis();
   if (active_ >= 0) {
-    if (!dirty_ && !apps_[active_]->wantsBackgroundWork() && (now - lastDrawMs_ < 150)) return;
+    if (active_ >= count_ || !apps_[active_]) {
+      Serial.println("[AppManager] invalid app, returning to launcher");
+      active_ = -1;
+      selected_ = 0;
+      requestRedraw();
+    } else {
+      if (!dirty_ && !apps_[active_]->wantsBackgroundWork() && (now - lastDrawMs_ < 150)) return;
+    }
   } else {
     if (!dirty_ && (now - lastDrawMs_ < 120)) return;
   }
@@ -28,10 +50,15 @@ void AppManager::draw() {
   ctx_->ui->clearFrame();
 
   if (active_ >= 0) {
+    if (!apps_[active_]) return;
     apps_[active_]->draw();
     ctx_->ui->footer(apps_[active_]->getHelpLine());
     if (ctx_->input) ctx_->input->setInputContext(apps_[active_]->inputContext());
   } else {
+    if (safeMode_ && ctx_->storage && !ctx_->storage->isMounted()) {
+      drawSdError();
+      return;
+    }
     drawMenu();
     if (ctx_->input) ctx_->input->setInputContext(InputContext::Menu);
   }
@@ -41,8 +68,19 @@ void AppManager::draw() {
 }
 
 void AppManager::onInput(const InputEvent& event) {
+  if (!ctx_) return;
+
+  if (safeMode_ && ctx_->storage && !ctx_->storage->isMounted() && active_ < 0) {
+    if (event.action == InputAction::Select || event.action == InputAction::Enter) {
+      Serial.println("[AppManager] manual SD retry requested from launcher");
+      ctx_->storage->retryMount();
+      requestRedraw();
+      return;
+    }
+  }
+
   if (active_ >= 0 && ctx_->input) {
-    ctx_->input->setInputContext(apps_[active_]->inputContext());
+    if (active_ < count_ && apps_[active_]) ctx_->input->setInputContext(apps_[active_]->inputContext());
   }
   if (event.action == InputAction::Wake) {
     // Wake suppression is handled in PowerManager and not forwarded into app handlers.
@@ -50,6 +88,12 @@ void AppManager::onInput(const InputEvent& event) {
     return;
   }
   if (active_ >= 0) {
+    if (active_ >= count_ || !apps_[active_]) {
+      active_ = -1;
+      dirty_ = true;
+      if (ctx_->input) ctx_->input->setInputContext(InputContext::Menu);
+      return;
+    }
     if (event.action == InputAction::Back && event.type == InputEventType::LongPress) {
       active_ = -1;
       dirty_ = true;
@@ -60,7 +104,7 @@ void AppManager::onInput(const InputEvent& event) {
     dirty_ = true;
     return;
   }
-  if (event.type != InputEventType::Press && event.type != InputEventType::Repeat) return;
+  if (!isPressOrRepeat(event)) return;
   if (event.action == InputAction::Up && selected_ > 0) --selected_;
   else if (event.action == InputAction::Down && selected_ < static_cast<int8_t>(count_) - 1) ++selected_;
   else if (event.action == InputAction::Left && count_) selected_ = (selected_ + count_ - 1) % count_;
@@ -75,7 +119,9 @@ void AppManager::onInput(const InputEvent& event) {
 }
 
 bool AppManager::backgroundBusy() const {
+  if (!count_) return false;
   for (uint8_t i = 0; i < count_; ++i) {
+    if (!apps_[i]) continue;
     if (apps_[i]->wantsBackgroundWork()) return true;
   }
   return false;
@@ -120,4 +166,17 @@ void AppManager::drawMenu() {
     count_);
   ctx_->ui->status("UP/DN/< >/TAB:APP  1-0 open", TerminalUI::Dim);
   ctx_->ui->footer("GO OPEN  HOLD GO:BACK");
+}
+
+void AppManager::drawSdError() {
+  ctx_->ui->clearFrame();
+  ctx_->ui->header("SD NOT MOUNTED");
+  ctx_->ui->line(2, "Check card");
+  ctx_->ui->line(3, "GO Retry");
+  ctx_->ui->line(4, "Hold GO Menu");
+  ctx_->ui->line(5, String("Last error: ") + (ctx_->storage ? ctx_->storage->getLastError() : "unknown"));
+  ctx_->ui->footer("GO Retry  HOLD GO:Menu");
+  ctx_->ui->pushFrame();
+  dirty_ = false;
+  lastDrawMs_ = millis();
 }

@@ -109,9 +109,15 @@ void setup() {
   M5Cardputer.begin(cfg, true);
   Serial.begin(115200);
 
-  input.begin();
   ui.begin();
-  storage.begin();
+  ui.header("Boot");
+  ui.line(2, "Init...");
+  ui.line(4, "SD and modules");
+  ui.pushFrame();
+
+  input.begin();
+  input.setDisplayAwake(true);
+  const bool cardMounted = storage.begin();
   settings.begin(storage);
   network.begin(storage);
   power.begin(input, settings);
@@ -123,10 +129,12 @@ void setup() {
   context.input = &input;
   registerApps();
 
-  if (!storage.ready()) {
+  if (!cardMounted) {
+    ui.clearFrame();
     ui.header("Storage");
-    ui.line(3, "SD missing. Insert card and reboot.", TerminalUI::Red);
-    delay(1000);
+    ui.line(2, "Insert SD card", TerminalUI::Yellow);
+    ui.line(3, "GO retry / long GO menu", TerminalUI::Yellow);
+    ui.pushFrame();
   }
 }
 

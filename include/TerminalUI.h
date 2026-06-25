@@ -37,6 +37,7 @@ private:
   int charH_ = 8;
   int rows_ = 17;
   int cols_ = 40;
+  bool ready_ = false;
   M5Canvas frame_;
   void clippedText(int x, int y, const String& text, uint16_t color, uint16_t bg = Black);
 };

@@ -6,6 +6,7 @@ void TerminalUI::begin() {
   M5Cardputer.Display.setRotation(1);
   frame_.setColorDepth(16);
   frame_.createSprite(M5Cardputer.Display.width(), M5Cardputer.Display.height());
+  ready_ = true;
   frame_.setTextSize(1);
   frame_.setTextFont(1);
   frame_.setTextDatum(TL_DATUM);
@@ -22,14 +23,22 @@ void TerminalUI::clear() {
 }
 
 void TerminalUI::clearFrame() {
+  if (!ready_) {
+    M5Cardputer.Display.fillScreen(Black);
+    return;
+  }
   frame_.fillScreen(Black);
 }
 
 void TerminalUI::pushFrame() {
+  if (!ready_) {
+    return;
+  }
   frame_.pushSprite(0, 0);
 }
 
 void TerminalUI::drawTopBar(const char* title, const char* status) {
+  if (!ready_) return;
   frame_.fillRect(0, 0, M5Cardputer.Display.width(), charH_ + 6, Black);
   String left = title ? String(title) : "";
   String right = status ? String(status) : "";
@@ -52,6 +61,7 @@ void TerminalUI::footer(const char* help) {
 }
 
 void TerminalUI::drawFooter(const char* help) {
+  if (!ready_) return;
   int y = footerRow() * charH_;
   String text = help ? String(help) : "";
   frame_.fillRect(0, y, M5Cardputer.Display.width(), charH_ + 2, Black);
@@ -67,6 +77,7 @@ void TerminalUI::drawFooter(const char* help) {
 }
 
 void TerminalUI::line(uint8_t row, const String& text, uint16_t color) {
+  if (!ready_) return;
   if (row >= rows_) return;
   int y = row * charH_;
   frame_.fillRect(0, y, M5Cardputer.Display.width(), charH_, Black);
@@ -74,12 +85,14 @@ void TerminalUI::line(uint8_t row, const String& text, uint16_t color) {
 }
 
 void TerminalUI::status(const String& text, uint16_t color) {
+  if (!ready_) return;
   if (rows_ > 1) {
     line(footerRow() - 1, text, color);
   }
 }
 
 void TerminalUI::listItem(uint8_t row, const String& text, bool selected) {
+  if (!ready_) return;
   if (row >= rows_) return;
   int y = row * charH_;
   uint16_t bg = selected ? Green : Black;
@@ -89,6 +102,7 @@ void TerminalUI::listItem(uint8_t row, const String& text, bool selected) {
 }
 
 void TerminalUI::drawCenteredTitle(const String& title) {
+  if (!ready_) return;
   int x = (M5Cardputer.Display.width() - min<int>(title.length() * 12, M5Cardputer.Display.width())) / 2;
   if (x < 0) x = 0;
   frame_.setTextSize(2);
@@ -99,6 +113,7 @@ void TerminalUI::drawCenteredTitle(const String& title) {
 }
 
 void TerminalUI::drawLargeIcon(const char* icon) {
+  if (!ready_) return;
   frame_.setTextSize(2);
   frame_.setTextColor(White, Black);
   String marker = icon ? String(icon) : "[*]";
@@ -111,6 +126,7 @@ void TerminalUI::drawLargeIcon(const char* icon) {
 }
 
 void TerminalUI::drawTile(const String& title, const char* icon, uint8_t index, uint8_t total) {
+  if (!ready_) return;
   drawLargeIcon(icon);
   drawCenteredTitle(title);
   line(10, String(index) + "/" + String(total), TerminalUI::Green);
@@ -119,6 +135,7 @@ void TerminalUI::drawTile(const String& title, const char* icon, uint8_t index, 
 }
 
 void TerminalUI::drawProgressBar(uint8_t x, uint8_t y, uint16_t width, uint8_t value, uint8_t maxValue) {
+  if (!ready_) return;
   if (maxValue == 0) return;
   if (width > M5Cardputer.Display.width() - x) width = M5Cardputer.Display.width() - x;
   uint16_t filled = static_cast<uint16_t>(width * value / maxValue);
@@ -127,6 +144,7 @@ void TerminalUI::drawProgressBar(uint8_t x, uint8_t y, uint16_t width, uint8_t v
 }
 
 void TerminalUI::drawValueBar(uint8_t x, uint8_t y, uint16_t width, uint16_t value, uint16_t maxValue) {
+  if (!ready_) return;
   if (maxValue == 0) return;
   if (width > M5Cardputer.Display.width() - x) width = M5Cardputer.Display.width() - x;
   uint16_t filled = static_cast<uint16_t>(width * value / maxValue);
@@ -135,6 +153,7 @@ void TerminalUI::drawValueBar(uint8_t x, uint8_t y, uint16_t width, uint16_t val
 }
 
 void TerminalUI::clippedText(int x, int y, const String& text, uint16_t color, uint16_t bg) {
+  if (!ready_) return;
   String clipped = text;
   int availableCols = M5Cardputer.Display.width() / charW_;
   if (clipped.length() > static_cast<size_t>(availableCols)) {

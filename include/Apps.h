@@ -21,7 +21,9 @@ public:
   const char* getHelpLine() const override { return "GO PLAY/PAUSE  > NEXT  UP/DN VOL  HOLD GO:BACK"; }
   bool wantsBackgroundWork() const override { return playing_; }
 private:
+  enum class State { NoSD, DirMissing, Empty, Ready };
   FileBrowser files_;
+  State state_ = State::NoSD;
   bool playing_ = false;
   bool shuffle_ = false;
   uint8_t volume_ = 7;
@@ -36,6 +38,7 @@ private:
   void stopTrack();
   void nextTrack();
   void applyVolume();
+  void refreshLibrary();
 };
 
 class RecorderApp : public App {
@@ -250,7 +253,7 @@ private:
 class SystemInfoApp : public App {
 public:
   void draw() override;
-  void onInput(const InputEvent&) override {}
+  void onInput(const InputEvent& event) override;
   const char* getTitle() const override { return "System Info"; }
-  const char* getHelpLine() const override { return "HOLD GO:MENU"; }
+  const char* getHelpLine() const override { return "GO:SD-RETRY  HOLD GO:BACK"; }
 };

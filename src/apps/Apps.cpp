@@ -12,7 +12,6 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <M5Cardputer.h>
-#include <SD.h>
 #include <WiFiClientSecure.h>
 #include <time.h>
 
@@ -94,6 +93,10 @@ static String stripTags(String html) {
   return out;
 }
 
+static bool storageReady(const AppContext* ctx) {
+  return ctx && ctx->storage && ctx->storage->isMounted();
+}
+
 static void writeLe16(File& f, uint16_t v) { f.write(v & 0xff); f.write((v >> 8) & 0xff); }
 static void writeLe32(File& f, uint32_t v) {
   f.write(v & 0xff); f.write((v >> 8) & 0xff); f.write((v >> 16) & 0xff); f.write((v >> 24) & 0xff);
@@ -101,18 +104,19 @@ static void writeLe32(File& f, uint32_t v) {
 
 void MusicApp::begin(AppContext& context) {
   App::begin(context);
-  files_.begin(*ctx_->storage, "/music", ".mp3");
-  volume_ = ctx_->settings->get().volume;
-  shuffle_ = ctx_->settings->get().shuffle;
-  output_ = new AudioOutputM5Speaker(&M5Cardputer.Speaker, 0);
-  applyVolume();
-  Serial.printf("[Music] found %u mp3 files\n", files_.count());
-  for (uint16_t i = 0; i < files_.count() && i < 3; ++i) {
-    Serial.printf("[Music] file: /music/%s\n", files_.item(i).c_str());
+  if (!ctx_->storage) {
+    state_ = State::NoSD;
+    return;
   }
+  files_.begin(*ctx_->storage, "/music", ".mp3");
+  volume_ = ctx_->settings ? ctx_->settings->get().volume : volume_;
+  shuffle_ = ctx_->settings ? ctx_->settings->get().shuffle : shuffle_;
+  state_ = State::NoSD;
+  refreshLibrary();
 }
 
 void MusicApp::update() {
+  if (!ctx_ || state_ != State::Ready || !storageReady(ctx_)) return;
   if (playing_ && mp3_) {
     if (mp3_->isRunning()) {
       if (!mp3_->loop()) nextTrack();
@@ -127,11 +131,23 @@ void MusicApp::update() {
 }
 
 void MusicApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Music");
+  if (state_ == State::NoSD) {
+    ctx_->ui->line(2, "SD not mounted");
+    ctx_->ui->line(3, "GO Retry");
+    ctx_->ui->line(4, "HOLD Back");
+    return;
+  }
+  if (state_ == State::DirMissing) {
+    ctx_->ui->line(2, "Music directory missing");
+    ctx_->ui->line(4, "Unable to create /music");
+    return;
+  }
   uint16_t count = files_.count();
-  if (!count) {
-    ctx_->ui->line(2, "No MP3 files in /music", TerminalUI::Yellow);
-    ctx_->ui->line(4, "Add .mp3 files to /music and refresh.");
+  if (state_ == State::Empty || !count) {
+    ctx_->ui->line(2, "No MP3 files");
+    ctx_->ui->line(4, "Put files in /music");
     return;
   }
 
@@ -152,7 +168,15 @@ void MusicApp::draw() {
 }
 
 void MusicApp::onInput(const InputEvent& e) {
+  if (!ctx_ || !ctx_->storage) return;
+  if (state_ == State::NoSD || state_ == State::DirMissing) {
+    if (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter)) {
+      refreshLibrary();
+    }
+    return;
+  }
   if (!files_.count()) {
+    if (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter)) refreshLibrary();
     return;
   }
   if (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter)) {
@@ -164,22 +188,39 @@ void MusicApp::onInput(const InputEvent& e) {
   else if (pressed(e, InputAction::Left)) shuffle_ = !shuffle_;
   else if (pressed(e, InputAction::Up) && volume_ < 15) { ++volume_; applyVolume(); }
   else if (pressed(e, InputAction::Down) && volume_ > 0) { --volume_; applyVolume(); }
-  ctx_->settings->edit().volume = volume_;
-  ctx_->settings->edit().shuffle = shuffle_;
-  ctx_->settings->save();
+  if (ctx_->settings) {
+    ctx_->settings->edit().volume = volume_;
+    ctx_->settings->edit().shuffle = shuffle_;
+    ctx_->settings->save();
+  }
 }
 
 bool MusicApp::startTrack() {
-  if (!files_.count()) { status_ = "error: no mp3 files"; return false; }
+  if (!ctx_ || !storageReady(ctx_)) { status_ = "error: no storage"; return false; }
+  if (state_ != State::Ready || !files_.count()) { status_ = "error: no mp3 files"; return false; }
   stopTrack();
-  String path = files_.selectedPath();
+  const String path = files_.selectedPath();
+  if (!ctx_->storage->isMounted() || !ctx_->storage->exists(path.c_str())) {
+    status_ = "error: file missing";
+    return false;
+  }
+  if (path.isEmpty()) { status_ = "error: invalid track"; return false; }
   file_ = new AudioFileSourceSD(path.c_str());
+  if (!file_) { status_ = "error: file alloc failed"; return false; }
   id3_ = new AudioFileSourceID3(file_);
+  if (!id3_) { stopTrack(); status_ = "error: id3 alloc failed"; return false; }
   mp3_ = new AudioGeneratorMP3();
+  if (!mp3_) { stopTrack(); status_ = "error: decoder alloc failed"; return false; }
+  output_ = new AudioOutputM5Speaker(&M5Cardputer.Speaker, 0);
+  if (!output_) {
+    stopTrack();
+    status_ = "error: speaker alloc failed";
+    return false;
+  }
   applyVolume();
   if (!mp3_->begin(id3_, output_)) {
     status_ = "error: MP3 open/output failed";
-    ctx_->storage->log(status_ + " " + path);
+    if (ctx_->storage) ctx_->storage->log(status_ + " " + path);
     stopTrack();
     return false;
   }
@@ -191,13 +232,15 @@ bool MusicApp::startTrack() {
 void MusicApp::stopTrack() {
   if (mp3_) { mp3_->stop(); delete mp3_; mp3_ = nullptr; }
   if (id3_) { delete id3_; id3_ = nullptr; }
-  if (file_) { delete file_; file_ = nullptr; }
+  if (file_) { file_->close(); delete file_; file_ = nullptr; }
+  if (output_) { delete output_; output_ = nullptr; }
   playing_ = false;
 }
 
 void MusicApp::nextTrack() {
-  if (!files_.count()) return;
-  files_.move(shuffle_ ? random(1, max<uint16_t>(2, files_.count())) : 1);
+  if (!ctx_ || state_ != State::Ready || !files_.count()) return;
+  if (shuffle_ && files_.count() > 1) files_.move(random(1, files_.count()));
+  else files_.move(1);
   startTrack();
 }
 
@@ -205,28 +248,56 @@ void MusicApp::applyVolume() {
   M5Cardputer.Speaker.setVolume(map(volume_, 0, 15, 0, 255));
 }
 
+void MusicApp::refreshLibrary() {
+  status_ = "idle";
+  if (!ctx_ || !ctx_->storage || !ctx_->storage->isMounted()) {
+    state_ = State::NoSD;
+    stopTrack();
+    return;
+  }
+  bool hasDir = ctx_->storage->exists("/music");
+  if (!hasDir) hasDir = ctx_->storage->makeDir("/music");
+  if (!hasDir) {
+    state_ = State::DirMissing;
+    return;
+  }
+  files_.refresh();
+  state_ = files_.count() ? State::Ready : State::Empty;
+}
+
 void RecorderApp::begin(AppContext& context) {
   App::begin(context);
+  M5Cardputer.Mic.begin();
+  if (!storageReady(ctx_)) {
+    recordingCount_ = 0;
+    return;
+  }
   path_ = makeRecordingPath();
   String files[128];
   recordingCount_ = ctx_->storage->listFiles("/recordings", ".wav", files, 128);
-  M5Cardputer.Mic.begin();
 }
 
 void RecorderApp::update() {
-  if (!recording_ || paused_) return;
+  if (!ctx_ || !storageReady(ctx_) || !recording_ || paused_) return;
   if (M5Cardputer.Mic.isRecording()) return;
   if (M5Cardputer.Mic.record(chunk_, ChunkSamples, SampleRate, false)) {
+    if (!file_) return;
     file_.write(reinterpret_cast<const uint8_t*>(chunk_), ChunkSamples * sizeof(int16_t));
     dataBytes_ += ChunkSamples * sizeof(int16_t);
     elapsedMs_ = millis() - startedAt_;
   } else {
-    ctx_->storage->log("recording error: Mic.record failed");
+    if (ctx_->storage) ctx_->storage->log("recording error: Mic.record failed");
   }
 }
 
 void RecorderApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Recorder");
+  if (!storageReady(ctx_)) {
+    ctx_->ui->line(2, "SD REQUIRED");
+    ctx_->ui->line(3, "Insert card or retry");
+    return;
+  }
   ctx_->ui->line(2, String("State: ") + (recording_ ? (paused_ ? "paused" : "recording") : "stopped"));
   ctx_->ui->line(4, String("Elapsed: ") + ((recording_ ? elapsedMs_ : 0) / 1000) + "s");
   ctx_->ui->line(6, String("Target: ") + path_);
@@ -235,7 +306,9 @@ void RecorderApp::draw() {
 }
 
 void RecorderApp::onInput(const InputEvent& e) {
+  if (!ctx_) return;
   if (pressed(e, InputAction::Select)) {
+    if (!storageReady(ctx_)) return;
     if (!recording_) {
       startRecording();
     } else {
@@ -247,7 +320,10 @@ void RecorderApp::onInput(const InputEvent& e) {
 }
 
 void RecorderApp::startRecording() {
-  if (!ctx_->storage->ready()) { ctx_->storage->log("recording error: SD missing"); return; }
+  if (!ctx_ || !storageReady(ctx_)) {
+    if (ctx_ && ctx_->storage) ctx_->storage->log("recording error: SD missing");
+    return;
+  }
   path_ = makeRecordingPath();
   file_ = ctx_->storage->open(path_.c_str(), FILE_WRITE);
   if (!file_) { ctx_->storage->log("recording error: open failed " + path_); return; }
@@ -260,8 +336,10 @@ void RecorderApp::startRecording() {
 }
 
 void RecorderApp::stopRecording() {
+  if (!ctx_ || !storageReady(ctx_) || !recording_) return;
   if (M5Cardputer.Mic.isRecording()) delay(2);
   elapsedMs_ = millis() - startedAt_;
+  if (!file_) return;
   file_.seek(0);
   writeWavHeader(dataBytes_);
   file_.close();
@@ -298,10 +376,12 @@ String RecorderApp::makeRecordingPath() {
 
 void NotesApp::begin(AppContext& context) {
   App::begin(context);
+  if (!storageReady(ctx_)) return;
   files_.begin(*ctx_->storage, "/notes", ".txt");
 }
 
 void NotesApp::update() {
+  if (!ctx_ || !storageReady(ctx_)) return;
   if (editing_ && editor_.dirty() && millis() - lastAutosave_ > 15000) {
     ctx_->storage->writeText("/notes/.draft.txt", editor_.text());
     lastAutosave_ = millis();
@@ -309,6 +389,7 @@ void NotesApp::update() {
 }
 
 void NotesApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Notes");
   if (editing_) {
     ctx_->ui->line(2, path_, TerminalUI::Green);
@@ -322,6 +403,11 @@ void NotesApp::draw() {
     }
     return;
   }
+  if (!storageReady(ctx_)) {
+    ctx_->ui->line(2, "SD REQUIRED");
+    ctx_->ui->line(3, "Insert card or retry");
+    return;
+  }
   if (!files_.count()) ctx_->ui->line(2, "No notes. Press N to create.", TerminalUI::Yellow);
   for (uint8_t i = 0; i < 10 && files_.top() + i < files_.count(); ++i) {
     uint16_t idx = files_.top() + i;
@@ -330,6 +416,11 @@ void NotesApp::draw() {
 }
 
 void NotesApp::onInput(const InputEvent& e) {
+  if (!ctx_) return;
+  if (!storageReady(ctx_) && (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter) ||
+                             e.action == InputAction::TextChar)) {
+    return;
+  }
   if (editing_) {
     if (pressed(e, InputAction::Select)) save();
     else editor_.onInput(e, true);
@@ -342,6 +433,7 @@ void NotesApp::onInput(const InputEvent& e) {
 }
 
 void NotesApp::openSelected() {
+  if (!ctx_ || !storageReady(ctx_)) return;
   if (!files_.count()) { newNote(); return; }
   path_ = files_.selectedPath();
   editor_.setText(ctx_->storage->readText(path_.c_str(), 16000));
@@ -349,6 +441,7 @@ void NotesApp::openSelected() {
 }
 
 void NotesApp::save() {
+  if (!ctx_ || !storageReady(ctx_)) return;
   if (path_.isEmpty()) path_ = ctx_->storage->nextNumberedPath("/notes", "NOTE_", ".txt");
   ctx_->storage->writeText(path_.c_str(), editor_.text());
   editor_.markSaved();
@@ -356,6 +449,7 @@ void NotesApp::save() {
 }
 
 void NotesApp::newNote() {
+  if (!ctx_ || !storageReady(ctx_)) return;
   path_ = ctx_->storage->nextNumberedPath("/notes", "NOTE_", ".txt");
   editor_.clear();
   editing_ = true;
@@ -363,11 +457,18 @@ void NotesApp::newNote() {
 
 void ReaderApp::begin(AppContext& context) {
   App::begin(context);
+  if (!storageReady(ctx_)) return;
   files_.begin(*ctx_->storage, "/books", ".txt");
 }
 
 void ReaderApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Reader");
+  if (!storageReady(ctx_)) {
+    ctx_->ui->line(2, "SD REQUIRED");
+    ctx_->ui->line(3, "Insert card or retry");
+    return;
+  }
   if (!opened_) {
     if (!files_.count()) ctx_->ui->line(2, "No .txt books in /books", TerminalUI::Yellow);
     for (uint8_t i = 0; i < 10 && files_.top() + i < files_.count(); ++i) {
@@ -386,6 +487,8 @@ void ReaderApp::draw() {
 }
 
 void ReaderApp::onInput(const InputEvent& e) {
+  if (!ctx_) return;
+  if (!storageReady(ctx_)) return;
   if (!opened_) {
     if (pressed(e, InputAction::Up)) files_.move(-1);
     else if (pressed(e, InputAction::Down)) files_.move(1);
@@ -406,10 +509,12 @@ void ReaderApp::onInput(const InputEvent& e) {
 
 void ClockApp::begin(AppContext& context) {
   App::begin(context);
+  if (!ctx_ || !ctx_->settings) return;
   manualOffsetMin_ = ctx_->settings->get().timezoneOffsetMin;
 }
 
 void ClockApp::update() {
+  if (!ctx_ || !ctx_->network || !ctx_->storage) return;
   if (ctx_->network->connected() && !ntpStarted_) syncNtp();
   if (running_) elapsedMs_ = millis() - baseMs_;
   if (mode_ == 2 && running_ && elapsedMs_ >= timerMs_ && !timerDone_) {
@@ -422,6 +527,7 @@ void ClockApp::update() {
 }
 
 void ClockApp::draw() {
+  if (!ctx_ || !ctx_->ui || !ctx_->network) return;
   ctx_->ui->header("Clock");
   const char* names[] = {"Clock", "Stopwatch", "Timer"};
   ctx_->ui->line(2, String("Mode: ") + names[mode_], TerminalUI::Green);
@@ -441,6 +547,7 @@ void ClockApp::draw() {
 }
 
 void ClockApp::onInput(const InputEvent& e) {
+  if (!ctx_) return;
   if (pressed(e, InputAction::Left) && mode_ > 0) --mode_;
   else if (pressed(e, InputAction::Right) && mode_ < 2) ++mode_;
   else if (pressed(e, InputAction::Select)) {
@@ -454,6 +561,7 @@ void ClockApp::onInput(const InputEvent& e) {
 }
 
 void ClockApp::syncNtp() {
+  if (!ctx_ || !ctx_->network) return;
   if (!ctx_->network->connected()) return;
   setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
   tzset();
@@ -468,6 +576,7 @@ void NetworkApp::begin(AppContext& context) {
 }
 
 void NetworkApp::draw() {
+  if (!ctx_ || !ctx_->ui || !ctx_->network) return;
   ctx_->ui->header("Network");
   String live = ctx_->network->connected() ? "connected" : (ctx_->network->connecting() ? "connecting" : (ctx_->network->failed() ? "failed" : "disconnected"));
   ctx_->ui->line(2, String("IP: ") + ctx_->network->ip() + " RSSI:" + ctx_->network->rssi(), TerminalUI::Green);
@@ -486,6 +595,7 @@ void NetworkApp::draw() {
 }
 
 void NetworkApp::onInput(const InputEvent& e) {
+  if (!ctx_ || !ctx_->network) return;
   if (password_) {
     if (pressed(e, InputAction::Enter)) {
       bool connected = ctx_->network->connect(ssid_, pass_.text());
@@ -503,6 +613,7 @@ void NetworkApp::onInput(const InputEvent& e) {
 
 void WebFileManagerApp::begin(AppContext& context) {
   App::begin(context);
+  if (!ctx_->storage || !ctx_->network) return;
   server_.on("/", HTTP_GET, [this]() { handleRoot(); });
   server_.on("/api/list", HTTP_GET, [this]() { handleList(); });
   server_.on("/download", HTTP_GET, [this]() { handleDownload(); });
@@ -516,18 +627,25 @@ void WebFileManagerApp::update() {
 }
 
 void WebFileManagerApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Web File Manager");
+  if (!ctx_->storage || !ctx_->storage->isMounted()) {
+    ctx_->ui->line(2, "SD REQUIRED");
+    ctx_->ui->line(3, "Insert card or retry");
+    return;
+  }
   ctx_->ui->line(2, String("State: ") + (running_ ? "running" : "stopped"));
   ctx_->ui->line(4, String("URL: http://") + ctx_->network->ip() + "/");
   ctx_->ui->line(6, "Local network only. Auth optional via settings.", TerminalUI::Yellow);
 }
 
 void WebFileManagerApp::onInput(const InputEvent& e) {
+  if (!ctx_ || !ctx_->storage || !ctx_->storage->isMounted()) return;
   if (pressed(e, InputAction::Select)) running_ ? stop() : start();
 }
 
 void WebFileManagerApp::start() {
-  if (!ctx_->network->connected()) return;
+  if (!ctx_ || !ctx_->network || !ctx_->network->connected() || !ctx_->storage || !ctx_->storage->isMounted()) return;
   server_.begin();
   running_ = true;
 }
@@ -560,7 +678,11 @@ void WebFileManagerApp::handleList() {
   bool ok = false;
   String path = cleanPath(server_.arg("path"), &ok);
   if (!ok) { server_.send(400, "application/json", "{\"error\":\"bad path\"}"); return; }
-  File dir = SD.open(path);
+  if (!ctx_ || !ctx_->storage || !ctx_->storage->isMounted() || !ctx_->storage->isDir(path.c_str())) {
+    server_.send(404, "application/json", "{\"error\":\"not directory\"}");
+    return;
+  }
+  File dir = ctx_->storage->open(path.c_str(), FILE_READ);
   if (!dir || !dir.isDirectory()) { server_.send(404, "application/json", "{\"error\":\"not directory\"}"); return; }
   JsonDocument doc;
   JsonArray arr = doc["items"].to<JsonArray>();
@@ -579,7 +701,11 @@ void WebFileManagerApp::handleDownload() {
   bool ok = false;
   String path = cleanPath(server_.arg("path"), &ok);
   if (!ok) { server_.send(400, "text/plain", "bad path"); return; }
-  File f = SD.open(path, FILE_READ);
+  if (!ctx_ || !ctx_->storage || !ctx_->storage->isMounted()) {
+    server_.send(500, "text/plain", "storage unavailable");
+    return;
+  }
+  File f = ctx_->storage->open(path.c_str(), FILE_READ);
   if (!f || f.isDirectory()) { server_.send(404, "text/plain", "not found"); return; }
   server_.streamFile(f, "application/octet-stream");
   f.close();
@@ -589,12 +715,12 @@ void WebFileManagerApp::handleUpload() {
   HTTPUpload& upload = server_.upload();
   bool ok = false;
   String dir = cleanPath(server_.arg("path"), &ok);
-  if (!ok) return;
+  if (!ok || !ctx_ || !ctx_->storage || !ctx_->storage->isMounted()) return;
   if (upload.status == UPLOAD_FILE_START) {
     String name = upload.filename;
     name.replace("/", "_");
     uploadPath_ = dir + "/" + name;
-    uploadFile_ = SD.open(uploadPath_, FILE_WRITE);
+    uploadFile_ = ctx_->storage->open(uploadPath_.c_str(), FILE_WRITE);
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (uploadFile_) uploadFile_.write(upload.buf, upload.currentSize);
   } else if (upload.status == UPLOAD_FILE_END) {
@@ -606,22 +732,32 @@ void WebFileManagerApp::handleMkdir() {
   bool ok = false;
   String path = cleanPath(server_.arg("path"), &ok);
   if (!ok) { server_.send(400, "application/json", "{\"error\":\"bad path\"}"); return; }
-  server_.send(SD.mkdir(path) ? 200 : 500, "application/json", SD.exists(path) ? "{\"ok\":true}" : "{\"error\":\"mkdir failed\"}");
+  if (!ctx_ || !ctx_->storage || !ctx_->storage->isMounted()) {
+    server_.send(500, "application/json", "{\"error\":\"storage unavailable\"}");
+    return;
+  }
+  bool done = ctx_->storage->makeDir(path.c_str());
+  server_.send(done ? 200 : 500, "application/json", done ? "{\"ok\":true}" : "{\"error\":\"mkdir failed\"}");
 }
 
 void WebFileManagerApp::handleDelete() {
   bool ok = false;
   String path = cleanPath(server_.arg("path"), &ok);
   if (!ok || path == "/") { server_.send(400, "application/json", "{\"error\":\"bad path\"}"); return; }
-  File f = SD.open(path);
+  if (!ctx_ || !ctx_->storage || !ctx_->storage->isMounted()) {
+    server_.send(500, "application/json", "{\"error\":\"storage unavailable\"}");
+    return;
+  }
+  File f = ctx_->storage->open(path.c_str(), FILE_READ);
   if (!f) { server_.send(404, "application/json", "{\"error\":\"not found\"}"); return; }
   bool dir = f.isDirectory();
   f.close();
-  bool done = dir ? SD.rmdir(path) : SD.remove(path);
+  bool done = dir ? ctx_->storage->rmdir(path.c_str()) : ctx_->storage->erase(path.c_str());
   server_.send(done ? 200 : 500, "application/json", done ? "{\"ok\":true}" : "{\"error\":\"delete failed\"}");
 }
 
 void RandomizerApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Randomizer");
   const char* modes[] = {"Yes/No/Maybe", "Number Range", "List Picker"};
   ctx_->ui->line(2, String("Mode: ") + modes[mode_], TerminalUI::Green);
@@ -646,9 +782,17 @@ void RandomizerApp::onInput(const InputEvent& e) {
 }
 
 void RandomizerApp::loadList() {
+  if (!ctx_ || !storageReady(ctx_)) {
+    result_ = "SD REQUIRED";
+    return;
+  }
   listCount_ = 0;
   String text = ctx_->storage->readText("/config/randomizer_lists.txt", 12000);
   if (!text.length()) text = ctx_->storage->readText("/notes/randomizer.txt", 12000);
+  if (!text.length()) {
+    result_ = "No /config/randomizer_lists.txt";
+    return;
+  }
   int start = 0;
   while (start < static_cast<int>(text.length()) && listCount_ < 32) {
     int end = text.indexOf('\n', start);
@@ -666,6 +810,7 @@ void BrowserApp::begin(AppContext& context) {
 }
 
 void BrowserApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Text Browser");
   if (entering_) ctx_->ui->line(3, String("URL/search: ") + url_.visibleLine(34), TerminalUI::Yellow);
   else if (selectingLink_) {
@@ -679,6 +824,7 @@ void BrowserApp::draw() {
 }
 
 void BrowserApp::onInput(const InputEvent& e) {
+  if (!ctx_ || !ctx_->storage || !ctx_->storage->isMounted() || !ctx_->network) return;
   if (entering_) {
     if (pressed(e, InputAction::Enter)) load();
     else url_.onInput(e, false);
@@ -696,18 +842,29 @@ void BrowserApp::onInput(const InputEvent& e) {
   else if (pressed(e, InputAction::Left) && historyCount_ > 1) { --historyCount_; loadUrl(history_[historyCount_ - 1]); }
   else if (pressed(e, InputAction::Down)) scroll_ = min<uint16_t>(page_.length(), scroll_ + 34);
   else if (pressed(e, InputAction::Up)) scroll_ = scroll_ > 34 ? scroll_ - 34 : 0;
-  else if (pressed(e, InputAction::Select)) ctx_->storage->writeText("/browser/saved_pages/page.txt", page_);
+  else if (pressed(e, InputAction::Select)) {
+    ctx_->storage->writeText("/browser/saved_pages/page.txt", page_);
+  }
 }
 
 void BrowserApp::load() {
-  if (!ctx_->network->connected()) { page_ = "Wi-Fi not connected."; entering_ = false; return; }
+  if (!ctx_ || !ctx_->network || !ctx_->network->connected()) {
+    page_ = "Wi-Fi not connected.";
+    entering_ = false;
+    return;
+  }
   String target = url_.text();
   if (!target.startsWith("http")) target = "https://duckduckgo.com/html/?q=" + urlEncode(target);
   loadUrl(target);
 }
 
 void BrowserApp::loadUrl(const String& target) {
-  if (!ctx_->network->connected()) { page_ = "Wi-Fi not connected."; entering_ = false; return; }
+  if (!ctx_ || !ctx_->network) return;
+  if (!ctx_->network->connected()) {
+    page_ = "Wi-Fi not connected.";
+    entering_ = false;
+    return;
+  }
   HTTPClient http;
   WiFiClientSecure secure;
   secure.setInsecure();
@@ -768,12 +925,14 @@ void AIApp::begin(AppContext& context) {
 }
 
 void AIApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("AI Text");
   ctx_->ui->line(2, String("Prompt: ") + prompt_.visibleLine(32), TerminalUI::Yellow);
   for (uint8_t i = 0; i < 8; ++i) ctx_->ui->line(i + 5, response_.substring(scroll_ + i * 34, scroll_ + (i + 1) * 34));
 }
 
 void AIApp::onInput(const InputEvent& e) {
+  if (!ctx_) return;
   if (pressed(e, InputAction::Enter)) send();
   else if (pressed(e, InputAction::Down)) scroll_ = min<uint16_t>(response_.length(), scroll_ + 34);
   else if (pressed(e, InputAction::Up)) scroll_ = scroll_ > 34 ? scroll_ - 34 : 0;
@@ -781,6 +940,14 @@ void AIApp::onInput(const InputEvent& e) {
 }
 
 void AIApp::send() {
+  if (!ctx_ || !ctx_->network || !ctx_->storage) {
+    response_ = "System unavailable.";
+    return;
+  }
+  if (!ctx_->storage->isMounted()) {
+    response_ = "SD not mounted.";
+    return;
+  }
   if (!ctx_->network->connected()) { response_ = "Wi-Fi not connected."; return; }
   String cfg = ctx_->storage->readText("/config/ai.json", 4096);
   if (!cfg.length()) { response_ = "ai.json missing."; return; }
@@ -849,6 +1016,7 @@ String AIApp::extractResponse(const String& body) {
 }
 
 void PaymentsApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Payments Info");
   ctx_->ui->line(3, "Payments are not supported on this");
   ctx_->ui->line(4, "hardware/firmware. Google Pay and");
@@ -858,6 +1026,7 @@ void PaymentsApp::draw() {
 }
 
 void InputDiagnosticsApp::draw() {
+  if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Input Test");
   InputEvent e = ctx_->input ? ctx_->input->lastEvent() : InputEvent{};
   if (!hasLast_) {
@@ -880,6 +1049,7 @@ void InputDiagnosticsApp::draw() {
 }
 
 void InputDiagnosticsApp::onInput(const InputEvent& event) {
+  if (!ctx_) return;
   if (event.action == InputAction::Enter && ctx_->power) {
     ctx_->power->screenOff();
     return;
@@ -916,6 +1086,7 @@ const char* InputDiagnosticsApp::typeName(InputEventType type) const {
 }
 
 void SystemInfoApp::draw() {
+  if (!ctx_ || !ctx_->ui || !ctx_->storage || !ctx_->network || !ctx_->power) return;
   ctx_->ui->header("System Info");
   ctx_->ui->line(2, String("SD: ") + (ctx_->storage->ready() ? "mounted" : "missing"));
   ctx_->ui->line(3, String("Heap: ") + ESP.getFreeHeap());
@@ -925,3 +1096,5 @@ void SystemInfoApp::draw() {
   ctx_->ui->line(8, "Build: unified-shell pass2", TerminalUI::Green);
   ctx_->ui->line(10, "Features: music rec net web browser ai", TerminalUI::Yellow);
 }
+
+void SystemInfoApp::onInput(const InputEvent&) {}

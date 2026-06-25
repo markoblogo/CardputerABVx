@@ -12,6 +12,8 @@ public:
   bool backgroundBusy() const;
   App* current() const;
   void requestRedraw();
+  bool isSafeMode() const { return safeMode_; }
+  void setSafeMode(bool safeMode) { safeMode_ = safeMode; }
 
 private:
   static constexpr uint8_t MaxApps = 16;
@@ -22,5 +24,7 @@ private:
   int8_t active_ = -1;
   bool dirty_ = true;
   uint32_t lastDrawMs_ = 0;
+  bool safeMode_ = false;
+  void drawSdError();
   void drawMenu();
 };
