@@ -21,4 +21,4 @@
 
 #define FEATURE_SAFE_BOOT 1
 
-#define FIRMWARE_VERSION "v0.1.4-safe-launcher"
+#define FIRMWARE_VERSION "v0.1.5-safe-input"

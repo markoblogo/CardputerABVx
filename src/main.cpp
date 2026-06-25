@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <cctype>
+#include <cstring>
 #include <M5Cardputer.h>
 #include <SD.h>
 #include <SPI.h>
@@ -22,7 +24,9 @@ constexpr uint8_t kSdCs = 12;
 constexpr uint32_t kSdSpeeds[] = {400000UL, 1000000UL, 4000000UL, 10000000UL, 25000000UL};
 constexpr uint32_t kBootHeartbeatMs = 2000;
 constexpr uint32_t kStateHeartbeatMs = 1000;
+constexpr uint32_t kInputDebounceMs = 80;
 constexpr uint32_t kBtnLongPressMs = 700;
+constexpr uint32_t kBtnDebounceMs = 80;
 
 // NOTE: keep safe-mode enums and state centralized to avoid AppManager/UI dependencies.
 enum class SafeModeScreen : uint8_t {
@@ -61,9 +65,26 @@ struct SafeSdState {
   String lastError;
 };
 
+enum class SafeAction : uint8_t {
+  None,
+  GoShort,
+  GoLong,
+  Enter,
+  Back,
+  Launcher,
+  Next,
+  Prev,
+  Up,
+  Down,
+  RetrySD,
+  Boot,
+  Right,
+  Text
+};
+
 struct SafeInputState {
-  String lastRaw;
-  String lastAction;
+  char lastRaw[16] = {0};
+  SafeAction lastAction = SafeAction::None;
   bool goShort = false;
   bool goLong = false;
   bool enter = false;
@@ -78,16 +99,20 @@ constexpr uint16_t kColorCyan = 0x07FF;
 
 SafeSdState g_sdState;
 SafeModeScreen g_safeScreen = SafeModeScreen::BootDiag;
+SafeModeScreen g_lastSafeScreen = SafeModeScreen::BootDiag;
 uint8_t g_safeSelectedApp = 0;
 bool g_needRedraw = true;
 bool g_btnDown = false;
 uint32_t g_btnDownAtMs = 0;
 bool g_btnLongHandled = false;
+uint32_t g_lastBtnChangeMs = 0;
 uint32_t g_lastHeartbeatMs = 0;
 uint32_t g_lastStateRedrawMs = 0;
+uint32_t g_lastKeyboardEventMs = 0;
 SafeInputState g_inputState;
 String g_randomResult = "Maybe";
 String g_disabledMessage;
+bool g_keyboardConsumedChange = false;
 
 const SafeLauncherItem kSafeLauncherItems[] = {
   {"System Info", "II", SafeModeScreen::SafeSystemInfo, false, false, ""},
@@ -98,7 +123,7 @@ const SafeLauncherItem kSafeLauncherItems[] = {
   {"Music", "MU", SafeModeScreen::SafeMusicStatus, true, false, "SD required"},
   {"Randomizer", "RND", SafeModeScreen::SafeRandomizer, false, false, ""},
   {"Clock", "CLK", SafeModeScreen::SafeClock, false, false, ""},
-  {"Disabled Apps", "OFF", SafeModeScreen::SafeDisabledApp, false, true, "Disabled in v0.1.4 safe mode"}
+  {"Disabled Apps", "OFF", SafeModeScreen::SafeDisabledApp, false, true, "Disabled in v0.1.5 safe mode"}
 };
 
 constexpr uint8_t kSafeLauncherCount = sizeof(kSafeLauncherItems) / sizeof(kSafeLauncherItems[0]);
@@ -106,6 +131,11 @@ constexpr uint8_t kSafeLauncherCount = sizeof(kSafeLauncherItems) / sizeof(kSafe
 bool isHiddenFileName(const String& name) {
   return name.startsWith(".") || name.startsWith("._") || name.equals(".DS_Store");
 }
+
+const char* actionName(SafeAction action);
+const char* screenName(SafeModeScreen screen);
+void formatRawLabelForLog(char* out, size_t outSize, char c);
+void logSafeInput(const char* raw, SafeAction action);
 
 void drawBootHeader(const char* sdLine, const char* bottomHint) {
   const int16_t w = M5Cardputer.Display.width();
@@ -115,7 +145,7 @@ void drawBootHeader(const char* sdLine, const char* bottomHint) {
   M5Cardputer.Display.setTextColor(kColorWhite, kColorBg);
   M5Cardputer.Display.setCursor(8, 8);
   M5Cardputer.Display.println("CARDPUTER ABVx");
-  M5Cardputer.Display.println("v0.1.4 SAFE BOOT");
+  M5Cardputer.Display.println("v0.1.5 SAFE BOOT");
   M5Cardputer.Display.println("Serial: OK");
   M5Cardputer.Display.println("Display: OK");
   M5Cardputer.Display.println(sdLine);
@@ -142,12 +172,12 @@ void drawTopBar(const char* title, const char* status) {
   M5Cardputer.Display.setTextColor(kColorWhite, kColorBg);
   M5Cardputer.Display.setCursor(2, 2);
   M5Cardputer.Display.print(title);
-  String right = status ? String(status) : String("-");
-  int rightLen = right.length() * 6;
+  const char* safeStatus = status ? status : "-";
+  const int rightLen = strlen(safeStatus) * 6;
   int16_t rightX = w - rightLen - 2;
   if (rightX < 0) rightX = 0;
   M5Cardputer.Display.setCursor(rightX, 2);
-  M5Cardputer.Display.print(right);
+  M5Cardputer.Display.print(safeStatus);
   M5Cardputer.Display.drawFastHLine(0, 13, w, kColorCyan);
 }
 
@@ -167,9 +197,11 @@ void drawLauncherScreen() {
   const int16_t h = M5Cardputer.Display.height();
 
   const SafeLauncherItem& item = kSafeLauncherItems[g_safeSelectedApp];
+  char status[8];
+  snprintf(status, sizeof(status), "%u/%u", static_cast<unsigned>(g_safeSelectedApp + 1), static_cast<unsigned>(kSafeLauncherCount));
 
   M5Cardputer.Display.fillScreen(kColorBg);
-  drawTopBar("ABVx SAFE", (String(g_safeSelectedApp + 1) + "/" + String(kSafeLauncherCount)).c_str());
+  drawTopBar("ABVx SAFE", status);
 
   M5Cardputer.Display.setTextSize(3);
   M5Cardputer.Display.setTextColor(kColorYellow, kColorBg);
@@ -180,12 +212,16 @@ void drawLauncherScreen() {
 
   M5Cardputer.Display.setTextSize(2);
   M5Cardputer.Display.setTextColor(kColorWhite, kColorBg);
-  String title = String(item.title);
-  if (title.length() > 18) title = title.substring(0, 18);
-  int tx = (w - static_cast<int16_t>(title.length()) * 12) / 2;
+  const char* titlePtr = item.title;
+  uint8_t titleLen = static_cast<uint8_t>(strlen(titlePtr));
+  if (titleLen > 18) {
+    titlePtr = item.title;
+    titleLen = 18;
+  }
+  int tx = (w - static_cast<int16_t>(titleLen) * 12) / 2;
   if (tx < 0) tx = 0;
   M5Cardputer.Display.setCursor(tx, h / 2 + 6);
-  M5Cardputer.Display.print(title);
+  M5Cardputer.Display.println(String(item.title).substring(0, titleLen));
 
   drawSafeFooter("< > APP   GO:OPEN   0:BOOT");
 }
@@ -254,7 +290,11 @@ void drawSafeMusicList() {
 
 void drawSafeSimpleListScreen(const char* title, const char* dirPath, const char* emptyLine) {
   M5Cardputer.Display.fillScreen(kColorBg);
-  drawTopBar(title, String(String(title).endsWith("Notes") ? "4/9" : "5/9").c_str());
+  if (strcmp(title, "Notes") == 0) {
+    drawTopBar(title, "4/9");
+  } else {
+    drawTopBar(title, "5/9");
+  }
   M5Cardputer.Display.setTextSize(1);
   M5Cardputer.Display.setTextColor(kColorWhite, kColorBg);
   M5Cardputer.Display.setCursor(2, 20);
@@ -319,9 +359,9 @@ void drawSafeInputTest() {
   M5Cardputer.Display.setTextColor(kColorWhite, kColorBg);
   M5Cardputer.Display.setCursor(2, 20);
   M5Cardputer.Display.print("Raw: ");
-  M5Cardputer.Display.println(g_inputState.lastRaw.length() ? g_inputState.lastRaw : "-");
+  M5Cardputer.Display.println(g_inputState.lastRaw[0] ? g_inputState.lastRaw : "-");
   M5Cardputer.Display.print("Action: ");
-  M5Cardputer.Display.println(g_inputState.lastAction.length() ? g_inputState.lastAction : "-");
+  M5Cardputer.Display.println(actionName(g_inputState.lastAction));
   M5Cardputer.Display.print("GO short: ");
   M5Cardputer.Display.println(g_inputState.goShort ? "yes" : "no");
   M5Cardputer.Display.print("GO long: ");
@@ -409,7 +449,7 @@ void drawSafeDisabledApp() {
   M5Cardputer.Display.setTextColor(kColorYellow, kColorBg);
   M5Cardputer.Display.setCursor(2, 28);
   M5Cardputer.Display.println("Selected module disabled");
-  M5Cardputer.Display.println("in v0.1.4 safe mode.");
+  M5Cardputer.Display.println("in v0.1.5 safe mode.");
   if (g_disabledMessage.length()) {
     M5Cardputer.Display.println(g_disabledMessage);
   }
@@ -417,6 +457,13 @@ void drawSafeDisabledApp() {
 }
 
 void redrawSafeState() {
+  if (g_safeScreen == g_lastSafeScreen && !g_needRedraw) {
+    return;
+  }
+
+  Serial.print("[SAFE] draw screen begin: ");
+  Serial.println(screenName(g_safeScreen));
+
   switch (g_safeScreen) {
     case SafeModeScreen::BootDiag:
       drawBootDiag();
@@ -449,18 +496,100 @@ void redrawSafeState() {
       drawSafeDisabledApp();
       break;
   }
+  Serial.print("[SAFE] draw screen end: ");
+  Serial.println(screenName(g_safeScreen));
   g_needRedraw = false;
+  g_lastSafeScreen = g_safeScreen;
   g_lastStateRedrawMs = millis();
 }
 
-void logSafeInput(const String& raw, const char* action) {
+const char* actionName(SafeAction action) {
+  switch (action) {
+    case SafeAction::None:
+      return "-";
+    case SafeAction::GoShort:
+      return "GO_SHORT";
+    case SafeAction::GoLong:
+      return "GO_LONG";
+    case SafeAction::Enter:
+      return "ENTER";
+    case SafeAction::Back:
+      return "BACK";
+    case SafeAction::Launcher:
+      return "LAUNCHER";
+    case SafeAction::Next:
+      return "NEXT";
+    case SafeAction::Prev:
+      return "PREV";
+    case SafeAction::Up:
+      return "UP";
+    case SafeAction::Down:
+      return "DOWN";
+    case SafeAction::RetrySD:
+      return "RETRY_SD";
+    case SafeAction::Boot:
+      return "BOOT";
+    case SafeAction::Right:
+      return "RIGHT";
+    case SafeAction::Text:
+      return "TEXT";
+  }
+  return "-";
+}
+
+const char* screenName(SafeModeScreen screen) {
+  switch (screen) {
+    case SafeModeScreen::BootDiag:
+      return "BootDiag";
+    case SafeModeScreen::SafeLauncher:
+      return "SafeLauncher";
+    case SafeModeScreen::SafeInputTest:
+      return "SafeInputTest";
+    case SafeModeScreen::SafeSystemInfo:
+      return "SafeSystemInfo";
+    case SafeModeScreen::SafeRandomizer:
+      return "SafeRandomizer";
+    case SafeModeScreen::SafeClock:
+      return "SafeClock";
+    case SafeModeScreen::SafeNotesList:
+      return "SafeNotesList";
+    case SafeModeScreen::SafeReaderList:
+      return "SafeReaderList";
+    case SafeModeScreen::SafeMusicStatus:
+      return "SafeMusicStatus";
+    case SafeModeScreen::SafeDisabledApp:
+      return "SafeDisabledApp";
+  }
+  return "Unknown";
+}
+
+void formatRawLabelForLog(char* out, size_t outSize, char c) {
+  if (!out || outSize == 0) return;
+  if (c == '\0') {
+    snprintf(out, outSize, "(none)");
+    return;
+  }
+
+  if (c >= 0x20 && c <= 0x7E) {
+    out[0] = c;
+    out[1] = '\0';
+    return;
+  }
+  snprintf(out, outSize, "0x%02X", static_cast<uint8_t>(c));
+}
+
+void logSafeInput(const char* raw, SafeAction action) {
   Serial.print("[SAFE INPUT] raw=");
-  Serial.print(raw.length() ? raw.c_str() : "(none)");
+  Serial.print(raw ? raw : "(none)");
   Serial.print(" action=");
-  Serial.println(action ? action : "(none)");
+  Serial.println(actionName(action));
   Serial.flush();
-  g_inputState.lastRaw = raw;
-  g_inputState.lastAction = action ? action : "";
+  if (raw && raw[0]) {
+    snprintf(g_inputState.lastRaw, sizeof(g_inputState.lastRaw), "%s", raw);
+  } else {
+    g_inputState.lastRaw[0] = 0;
+  }
+  g_inputState.lastAction = action;
 }
 
 bool testSdManually() {
@@ -522,82 +651,55 @@ bool testSdManually() {
   return ok;
 }
 
-bool mapCharToAction(char c, const char*& actionOut, bool& hasMapped) {
-  hasMapped = false;
-  actionOut = "TEXT";
-
-  if (!c) return false;
-
-  if (c == ';' || c == ':') {
-    actionOut = "UP";
-    hasMapped = true;
-    return true;
-  }
-  if (c == ',' || c == '<') {
-    actionOut = "LEFT";
-    hasMapped = true;
-    return true;
-  }
-  if (c == '.' || c == '>') {
-    actionOut = "DOWN";
-    hasMapped = true;
-    return true;
-  }
-  if (c == '/' || c == '?') {
-    actionOut = "RIGHT";
-    hasMapped = true;
-    return true;
-  }
-
+SafeAction mapCharToAction(char c) {
   const char lower = static_cast<char>(tolower(static_cast<uint8_t>(c)));
-  if (lower == 'w' || lower == 'k') {
-    actionOut = "UP";
-    hasMapped = true;
-    return true;
-  }
-  if (lower == 's' || lower == 'j') {
-    actionOut = "DOWN";
-    hasMapped = true;
-    return true;
-  }
-  if (lower == 'd' || lower == 'l' || lower == '\t') {
-    actionOut = "NEXT";
-    hasMapped = true;
-    return true;
-  }
-  if (lower == 'a' || lower == 'h') {
-    actionOut = "PREV";
-    hasMapped = true;
-    return true;
-  }
-  if (c == '1') {
-    actionOut = "LAUNCHER";
-    hasMapped = true;
-    return true;
-  }
-  if (c == '0') {
-    actionOut = "BOOT";
-    hasMapped = true;
-    return true;
-  }
-  if (lower == 'r') {
-    actionOut = "RETRY_SD";
-    hasMapped = true;
-    return true;
-  }
-  if (lower == 'b') {
-    actionOut = "BACK";
-    hasMapped = true;
-    return true;
-  }
-  if (lower == 'g') {
-    actionOut = "GO";
-    hasMapped = true;
-    return true;
+
+  // Number shortcuts.
+  if (c == '1') return SafeAction::Launcher;
+  if (c == '0') return SafeAction::Boot;
+
+  // Explicit backspace/text controls.
+  if (lower == 'r') return SafeAction::RetrySD;
+  if (lower == 'b') return SafeAction::Back;
+
+  // Navigation letters.
+  if (lower == 'd' || lower == 'l' || c == '\t') return SafeAction::Next;
+  if (lower == 'a' || lower == 'h') return SafeAction::Prev;
+  if (lower == 'w' || lower == 'k') return SafeAction::Up;
+  if (lower == 's' || lower == 'j') return SafeAction::Down;
+
+  // Punctuation arrows.
+  if (c == ';' || c == ':') return SafeAction::Up;
+  if (c == ',' || c == '<') return SafeAction::Prev;
+  if (c == '.' || c == '>') return SafeAction::Down;
+  if (c == '/' || c == '?') return SafeAction::Right;
+
+  // Optional fallback for GO-equivalent key.
+  if (lower == 'g') return SafeAction::Enter;
+
+  return SafeAction::Text;
+}
+
+SafeAction parseKeyboardAction(char c) {
+  if (!c) {
+    return SafeAction::None;
   }
 
-  actionOut = "TEXT";
-  return false;
+  SafeAction action = mapCharToAction(c);
+
+  return action;
+}
+
+void setSafeInputStatusForAction(SafeAction action, const char* raw) {
+  if (!raw) {
+    raw = "(none)";
+  }
+  g_inputState.enter = false;
+  g_inputState.backspace = false;
+  g_inputState.enter = action == SafeAction::Enter;
+  g_inputState.backspace = action == SafeAction::Back;
+  if (action == SafeAction::GoShort) g_inputState.goShort = true;
+  if (action == SafeAction::GoLong) g_inputState.goLong = true;
 }
 
 void openSelectedLauncherItem() {
@@ -639,71 +741,76 @@ void openSelectedLauncherItem() {
   g_needRedraw = true;
 }
 
-void handleSafeAction(const String& raw, const char* actionLabel) {
-  if (!actionLabel || !actionLabel[0]) {
+void handleSafeAction(SafeAction action, const char* raw) {
+  if (action == SafeAction::None) {
     return;
   }
 
-  logSafeInput(raw, actionLabel);
+  Serial.print("[SAFE] handle action begin: ");
+  Serial.println(actionName(action));
+  setSafeInputStatusForAction(action, raw);
+  logSafeInput(raw, action);
+
+  g_needRedraw = false;
 
   switch (g_safeScreen) {
     case SafeModeScreen::BootDiag:
-      if (strcmp(actionLabel, "LAUNCHER") == 0) {
+      if (action == SafeAction::Launcher) {
         g_safeScreen = SafeModeScreen::SafeLauncher;
         g_needRedraw = true;
-      } else if (strcmp(actionLabel, "GO") == 0 || strcmp(actionLabel, "BOOT") == 0 || strcmp(actionLabel, "ENTER") == 0) {
+      } else if (action == SafeAction::Enter || action == SafeAction::Boot) {
         testSdManually();
-      } else if (strcmp(actionLabel, "RETRY_SD") == 0) {
+      } else if (action == SafeAction::RetrySD) {
         testSdManually();
       }
       break;
 
     case SafeModeScreen::SafeLauncher:
-      if (strcmp(actionLabel, "NEXT") == 0) {
+      if (action == SafeAction::Next) {
         g_safeSelectedApp = (g_safeSelectedApp + 1) % kSafeLauncherCount;
         g_needRedraw = true;
-      } else if (strcmp(actionLabel, "PREV") == 0) {
+      } else if (action == SafeAction::Prev) {
         g_safeSelectedApp = (g_safeSelectedApp + kSafeLauncherCount - 1) % kSafeLauncherCount;
         g_needRedraw = true;
-      } else if (strcmp(actionLabel, "UP") == 0 || strcmp(actionLabel, "DOWN") == 0) {
+      } else if (action == SafeAction::Up || action == SafeAction::Down || action == SafeAction::Right) {
         // no-op in single-tile launcher
-      } else if (strcmp(actionLabel, "GO") == 0 || strcmp(actionLabel, "OPEN") == 0 || strcmp(actionLabel, "ENTER") == 0) {
+      } else if (action == SafeAction::Enter) {
         openSelectedLauncherItem();
-      } else if (strcmp(actionLabel, "BACK") == 0 || strcmp(actionLabel, "BOOT") == 0) {
+      } else if (action == SafeAction::Back || action == SafeAction::Boot) {
         g_safeScreen = SafeModeScreen::BootDiag;
         g_needRedraw = true;
       }
       break;
 
     case SafeModeScreen::SafeInputTest:
-  if (strcmp(actionLabel, "BACK") == 0 || strcmp(actionLabel, "BOOT") == 0) {
+      if (action == SafeAction::Back || action == SafeAction::Boot) {
         g_safeScreen = SafeModeScreen::SafeLauncher;
         g_needRedraw = true;
       }
       break;
 
     case SafeModeScreen::SafeSystemInfo:
-      if (strcmp(actionLabel, "RETRY_SD") == 0) {
+      if (action == SafeAction::RetrySD) {
         testSdManually();
-      } else if (strcmp(actionLabel, "GO") == 0 || strcmp(actionLabel, "BACK") == 0 || strcmp(actionLabel, "BOOT") == 0) {
+      } else if (action == SafeAction::Enter || action == SafeAction::Back || action == SafeAction::Boot) {
         g_safeScreen = SafeModeScreen::SafeLauncher;
         g_needRedraw = true;
       }
       break;
 
     case SafeModeScreen::SafeRandomizer:
-      if (strcmp(actionLabel, "GO") == 0 || strcmp(actionLabel, "OPEN") == 0 || strcmp(actionLabel, "ENTER") == 0) {
+      if (action == SafeAction::Enter) {
         static const char* outcomes[] = {"Yes", "No", "Maybe"};
         g_randomResult = outcomes[random(0, 3)];
         g_needRedraw = true;
-      } else if (strcmp(actionLabel, "BACK") == 0 || strcmp(actionLabel, "BOOT") == 0) {
+      } else if (action == SafeAction::Back || action == SafeAction::Boot) {
         g_safeScreen = SafeModeScreen::SafeLauncher;
         g_needRedraw = true;
       }
       break;
 
     case SafeModeScreen::SafeClock:
-      if (strcmp(actionLabel, "BACK") == 0 || strcmp(actionLabel, "GO") == 0 || strcmp(actionLabel, "BOOT") == 0) {
+      if (action == SafeAction::Back || action == SafeAction::Enter || action == SafeAction::Boot) {
         g_safeScreen = SafeModeScreen::SafeLauncher;
         g_needRedraw = true;
       }
@@ -712,26 +819,28 @@ void handleSafeAction(const String& raw, const char* actionLabel) {
     case SafeModeScreen::SafeNotesList:
     case SafeModeScreen::SafeReaderList:
     case SafeModeScreen::SafeMusicStatus:
-      if (strcmp(actionLabel, "RETRY_SD") == 0) {
+      if (action == SafeAction::RetrySD) {
         testSdManually();
-      } else if (strcmp(actionLabel, "GO") == 0 || strcmp(actionLabel, "BACK") == 0 || strcmp(actionLabel, "BOOT") == 0 || strcmp(actionLabel, "ENTER") == 0) {
+      } else if (action == SafeAction::Enter || action == SafeAction::Back || action == SafeAction::Boot) {
         g_safeScreen = SafeModeScreen::SafeLauncher;
         g_needRedraw = true;
       }
       break;
 
     case SafeModeScreen::SafeDisabledApp:
-      if (strcmp(actionLabel, "BACK") == 0 || strcmp(actionLabel, "BOOT") == 0 || strcmp(actionLabel, "GO") == 0 || strcmp(actionLabel, "ENTER") == 0) {
+      if (action == SafeAction::Back || action == SafeAction::Boot || action == SafeAction::Enter) {
         g_safeScreen = SafeModeScreen::SafeLauncher;
         g_needRedraw = true;
       }
       break;
   }
+
+  Serial.print("[SAFE] handle action end: ");
+  Serial.println(actionName(action));
 }
 
 void handleGoShort() {
-  g_inputState.goShort = true;
-  logSafeInput("<go>", "GO_SHORT");
+  handleSafeAction(SafeAction::GoShort, "<go>");
 
   if (g_safeScreen == SafeModeScreen::BootDiag) {
     testSdManually();
@@ -757,8 +866,7 @@ void handleGoShort() {
 }
 
 void handleGoLong() {
-  g_inputState.goLong = true;
-  logSafeInput("<go>", "GO_LONG");
+  handleSafeAction(SafeAction::GoLong, "<go>");
   g_safeScreen = SafeModeScreen::BootDiag;
   g_needRedraw = true;
 }
@@ -766,7 +874,12 @@ void handleGoLong() {
 void processButton() {
   const uint32_t now = millis();
   const bool btnDown = M5Cardputer.BtnA.isPressed();
+  if (btnDown != g_btnDown && (now - g_lastBtnChangeMs < kBtnDebounceMs)) {
+    return;
+  }
+
   if (btnDown != g_btnDown) {
+    g_lastBtnChangeMs = now;
     const bool wasDown = g_btnDown;
     if (wasDown && !btnDown) {
       const uint32_t held = now - g_btnDownAtMs;
@@ -787,46 +900,80 @@ void processButton() {
 }
 
 void processKeyboard() {
+  const uint32_t now = millis();
   const bool keyChanged = M5Cardputer.Keyboard.isChange();
-  const auto keys = M5Cardputer.Keyboard.keysState();
-  bool mappedAny = false;
-  String raw;
-
   if (!keyChanged) {
+    g_keyboardConsumedChange = false;
+    return;
+  }
+  if (g_keyboardConsumedChange) {
+    return;
+  }
+  if (now - g_lastKeyboardEventMs < kInputDebounceMs) {
     return;
   }
 
-  g_inputState.enter = keys.enter;
-  g_inputState.backspace = keys.del;
+  const auto keys = M5Cardputer.Keyboard.keysState();
+  char rawLabel[16] = {0};
+  uint8_t firstRaw = 0;
+  char textChar = 0;
+
   if (keys.enter) {
-    handleSafeAction("", "ENTER");
+    snprintf(rawLabel, sizeof(rawLabel), "<enter>");
+    handleSafeAction(SafeAction::Enter, rawLabel);
+    g_keyboardConsumedChange = true;
+    g_lastKeyboardEventMs = now;
+    return;
   }
   if (keys.del) {
-    handleSafeAction("", "BACKSPACE");
+    snprintf(rawLabel, sizeof(rawLabel), "<bs>");
+    handleSafeAction(SafeAction::Back, rawLabel);
+    g_keyboardConsumedChange = true;
+    g_lastKeyboardEventMs = now;
+    return;
   }
 
   for (uint8_t idx = 0; idx < sizeof(keys.word); ++idx) {
-    const auto cRaw = keys.word[idx];
-    if (!cRaw) break;
-    char c = static_cast<char>(cRaw);
-    if (c == '\0') {
+    const uint8_t c = static_cast<uint8_t>(keys.word[idx]);
+    if (c == 0) {
       continue;
     }
-
-    const char* action = "TEXT";
-    bool hasAction = false;
-    mappedAny = mapCharToAction(c, action, hasAction) || hasAction;
-    raw += c;
-
-    if (hasAction) {
-      handleSafeAction(raw, action);
-      mappedAny = true;
+    if (!firstRaw) {
+      firstRaw = c;
+    }
+    if ((c >= 0x20) && (c <= 0x7E)) {
+      textChar = static_cast<char>(c);
+      break;
     }
   }
 
-  if (!mappedAny && raw.length()) {
-    handleSafeAction(raw, "TEXT");
+  if (firstRaw == '\t') {
+    snprintf(rawLabel, sizeof(rawLabel), "<tab>");
+    handleSafeAction(SafeAction::Next, rawLabel);
+    g_keyboardConsumedChange = true;
+    g_lastKeyboardEventMs = now;
+    return;
   }
+
+  if (!firstRaw) {
+    return;
+  }
+
+  if (!textChar) {
+    formatRawLabelForLog(rawLabel, sizeof(rawLabel), static_cast<char>(firstRaw));
+    handleSafeAction(SafeAction::Text, rawLabel);
+    g_keyboardConsumedChange = true;
+    g_lastKeyboardEventMs = now;
+    return;
+  }
+
+  if (!rawLabel[0]) {
+    formatRawLabelForLog(rawLabel, sizeof(rawLabel), textChar);
+  }
+
+  handleSafeAction(parseKeyboardAction(textChar), rawLabel);
+  g_keyboardConsumedChange = true;
+  g_lastKeyboardEventMs = now;
 }
 }  // namespace
 #endif
@@ -932,7 +1079,7 @@ void setup() {
   Serial.println("[SAFE] settings save skipped in ultra-safe mode");
   delay(1000);
   Serial.println();
-  Serial.println("[BOOT] 000 setup entered v0.1.4-safe-launcher ultra-safe");
+  Serial.println("[BOOT] 000 setup entered v0.1.5-safe-input ultra-safe");
   Serial.flush();
   Serial.println("[BOOT] 010 before M5Cardputer.begin");
   Serial.flush();
