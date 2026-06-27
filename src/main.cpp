@@ -36,11 +36,17 @@ enum class UltraScreenMode : uint8_t {
   LauncherTest,
 };
 
+enum class UltraLauncherTile : uint8_t {
+  TileOne,
+  TileTwo,
+};
+
 uint32_t g_lastHeartbeatMs = 0;
 bool g_btnDown = false;
 uint32_t g_btnDownAtMs = 0;
 bool g_btnLongHandled = false;
 UltraScreenMode g_screenMode = UltraScreenMode::BootDiag;
+UltraLauncherTile g_launcherTile = UltraLauncherTile::TileOne;
 uint32_t g_lastKeyPressMs = 0;
 bool g_keyHeld = false;
 String g_sdStatus = "SD: not tested";
@@ -51,7 +57,9 @@ char g_renderedRawLabel[kLastRawMaxLen] = {};
 char g_renderedActionLabel[kLastActionMaxLen] = {};
 char g_renderedLine[kLastLineMaxLen] = {};
 UltraScreenMode g_renderedMode = UltraScreenMode::BootDiag;
+UltraLauncherTile g_renderedLauncherTile = UltraLauncherTile::TileTwo;
 String g_renderedSdStatus;
+void testSdFromBoot();
 
 void setUltraSafeLastLine(const char rawLabel[16], const char* actionLabel) {
   snprintf(g_lastRawLabel, kLastRawMaxLen, "%s", rawLabel && rawLabel[0] ? rawLabel : "?");
@@ -83,10 +91,24 @@ void drawLauncherTestScreen(const char* lastLine) {
   M5Cardputer.Display.setCursor(8, 8);
   M5Cardputer.Display.println("CARDPUTER ABVx");
   M5Cardputer.Display.println("LAUNCHER TEST");
+  M5Cardputer.Display.println("TILE ONE");
+  M5Cardputer.Display.println("TILE TWO");
   M5Cardputer.Display.setTextColor(0x07FF, 0x0000);
-  M5Cardputer.Display.println("This is only a static screen.");
+  if (g_launcherTile == UltraLauncherTile::TileOne) {
+    M5Cardputer.Display.println(">");
+  } else {
+    M5Cardputer.Display.println(" ");
+  }
+  M5Cardputer.Display.println("d/D: next");
   M5Cardputer.Display.setTextColor(0xFFE0, 0x0000);
   M5Cardputer.Display.println("0/B/b: back");
+  if (g_lastActionLabel[0] == 'S' && strcmp(g_lastActionLabel, "SELECT") == 0) {
+    if (g_launcherTile == UltraLauncherTile::TileOne) {
+      M5Cardputer.Display.println("SELECTED TILE ONE");
+    } else {
+      M5Cardputer.Display.println("SELECTED TILE TWO");
+    }
+  }
   M5Cardputer.Display.println(lastLine);
 }
 
@@ -94,8 +116,9 @@ void renderUltraSafeScreenIfNeeded() {
   const bool modeChanged = g_renderedMode != g_screenMode;
   const bool lineChanged = strcmp(g_lastLine, g_renderedLine) != 0;
   const bool statusChanged = (g_renderedSdStatus != g_sdStatus) && (g_screenMode == UltraScreenMode::BootDiag);
+  const bool tileChanged = (g_screenMode == UltraScreenMode::LauncherTest) && (g_renderedLauncherTile != g_launcherTile);
 
-  if (!modeChanged && !lineChanged && !statusChanged) {
+  if (!modeChanged && !lineChanged && !statusChanged && !tileChanged) {
     return;
   }
 
@@ -109,6 +132,7 @@ void renderUltraSafeScreenIfNeeded() {
   strcpy(g_renderedRawLabel, g_lastRawLabel);
   strcpy(g_renderedActionLabel, g_lastActionLabel);
   strcpy(g_renderedLine, g_lastLine);
+  g_renderedLauncherTile = g_launcherTile;
   g_renderedSdStatus = g_sdStatus;
 }
 
@@ -132,6 +156,7 @@ void applyUltraSafeKeyAction(char key) {
   if (key == '1') {
     if (g_screenMode == UltraScreenMode::BootDiag) {
       g_screenMode = UltraScreenMode::LauncherTest;
+      g_launcherTile = UltraLauncherTile::TileOne;
       setUltraSafeLastLine("1", "LAUNCHER");
     } else {
       setUltraSafeLastLine("1", "IGNORED");
@@ -143,6 +168,16 @@ void applyUltraSafeKeyAction(char key) {
     g_screenMode = UltraScreenMode::BootDiag;
     const char rawKey[2] = {key, '\0'};
     setUltraSafeLastLine(rawKey, "BOOT");
+    return;
+  }
+
+  if (g_screenMode == UltraScreenMode::LauncherTest && (key == 'd' || key == 'D')) {
+    if (g_launcherTile == UltraLauncherTile::TileOne) {
+      g_launcherTile = UltraLauncherTile::TileTwo;
+    } else {
+      g_launcherTile = UltraLauncherTile::TileOne;
+    }
+    setUltraSafeLastLine("d", "NEXT");
     return;
   }
 
@@ -158,6 +193,15 @@ void applyUltraSafeKeyAction(char key) {
   }
 
   setUltraSafeLastLine("?", "IGNORED");
+}
+
+void selectCurrentLauncherTile() {
+  if (g_screenMode == UltraScreenMode::LauncherTest) {
+    setUltraSafeLastLine("GO", "SELECT");
+    renderUltraSafeScreenIfNeeded();
+  } else {
+    testSdFromBoot();
+  }
 }
 
 void testSdFromBoot() {
@@ -401,7 +445,7 @@ void loop() {
 
     if (!btnDown) {
       if (!g_btnLongHandled) {
-        testSdFromBoot();
+        selectCurrentLauncherTile();
       }
     }
   } else if (btnDown && !g_btnLongHandled && (now - g_btnDownAtMs >= kBtnLongPressMs)) {
