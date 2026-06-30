@@ -30,7 +30,7 @@ constexpr gpio_num_t PIN_SPI_SCLK = GPIO_NUM_40;
 constexpr gpio_num_t PIN_SD_CS = GPIO_NUM_12;
 constexpr const char* MOUNT_POINT = "/sdcard";
 constexpr const char* MUSIC_DIR = "/sdcard/music";
-constexpr const char* RECORDINGS_DIR = "/sdcard/recordings";
+constexpr const char* RECORDINGS_DIR = "/sdcard/rec";
 constexpr int SCREEN_W = 240;
 constexpr int SCREEN_H = 135;
 constexpr int INPUT_BUF_SIZE = 8 * 1024;
@@ -353,10 +353,22 @@ void writeWavHeader(FILE* f, uint32_t samples)
     writeLe32(f, data_bytes);
 }
 
-bool ensureRecordingsDir()
+bool ensureRecordingsDir(std::string* err = nullptr)
 {
-    if (!initSd()) return false;
-    if (mkdir(RECORDINGS_DIR, 0775) != 0 && errno != EEXIST) return false;
+    if (!initSd()) {
+        if (err) *err = "sd mount";
+        return false;
+    }
+    errno = 0;
+    if (mkdir(RECORDINGS_DIR, 0775) != 0 && errno != EEXIST) {
+        if (err) {
+            *err = "mkdir ";
+            *err += std::to_string(errno);
+            *err += " ";
+            *err += std::strerror(errno);
+        }
+        return false;
+    }
     return true;
 }
 
@@ -623,8 +635,7 @@ void updateAudio()
 bool startRecording(std::string* err = nullptr)
 {
     stopPlayback();
-    if (!ensureRecordingsDir()) {
-        if (err) *err = "no sd/dir";
+    if (!ensureRecordingsDir(err)) {
         return false;
     }
     scanRecordings();
