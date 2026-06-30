@@ -123,6 +123,7 @@ std::vector<int16_t> pcm_chunk;
 int pcm_rate = 44100;
 int pcm_channels = 2;
 int decoded_chunks = 0;
+mp3d_sample_t test_frame_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
 
 void flushKeyboardEvents()
 {
@@ -759,27 +760,18 @@ bool mp3ProbeEmbedded(std::string* result)
     showImmediateMessage("MP3 S1", "FIX\n" + std::to_string(len));
     M5.delay(900);
 
-    const size_t sync = EMBEDDED_TEST01_SYNC_OFFSET;
-    if (sync + 4 >= len || data[sync] != 0xFF || (data[sync + 1] & 0xE0) != 0xE0) {
-        if (result) {
-            *result = "fixed sync invalid\nsync=" + std::to_string(sync) +
-                      "\nbytes=" + std::to_string(len);
-        }
-        return false;
-    }
-
     showImmediateMessage("MP3 S2", "ALLOC");
-    M5.delay(900);
+    M5.delay(1200);
 
+    const size_t sync = EMBEDDED_TEST01_SYNC_OFFSET;
     mp3dec_t dec;
     mp3dec_init(&dec);
-    std::vector<mp3d_sample_t> frame_pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);
     mp3dec_frame_info_t info = {};
 
     showImmediateMessage("MP3 S3", "DECODE");
-    M5.delay(900);
+    M5.delay(1200);
 
-    const int samples = mp3dec_decode_frame(&dec, data + sync, static_cast<int>(len - sync), frame_pcm.data(), &info);
+    const int samples = mp3dec_decode_frame(&dec, data + sync, static_cast<int>(len - sync), test_frame_pcm, &info);
     if (samples <= 0 || info.frame_bytes <= 0 || info.channels <= 0 || info.hz <= 0) {
         if (result) {
             *result = "decode failed" +
