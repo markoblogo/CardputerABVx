@@ -86,6 +86,7 @@ bool shift_down = false;
 bool fn_down = false;
 std::string last_key_name;
 uint32_t last_key_ms = 0;
+uint32_t input_block_until_ms = 0;
 
 Screen screen = Screen::Launcher;
 int launcher_index = 0;
@@ -113,6 +114,23 @@ bool playing = false;
 std::vector<int16_t> pcm_chunk;
 int pcm_rate = 44100;
 int pcm_channels = 2;
+int decoded_chunks = 0;
+
+void flushKeyboardEvents()
+{
+    while (keyboard.available()) {
+        keyboard.getEvent();
+    }
+    keyboard.writeRegister8(TCA8418_REG_INT_STAT, 1);
+    (void)M5.BtnA.wasClicked();
+    last_key_name.clear();
+}
+
+void blockInput(uint32_t ms)
+{
+    input_block_until_ms = M5.millis() + ms;
+    flushKeyboardEvents();
+}
 
 RawKey decodeRaw(uint8_t event_raw)
 {
@@ -155,6 +173,10 @@ Key keyFromName(const char* name)
 
 KeyEvent pollKey()
 {
+    if (M5.millis() < input_block_until_ms) {
+        flushKeyboardEvents();
+        return {};
+    }
     if (M5.BtnA.wasClicked()) return {Key::Home, "GO"};
     if (!keyboard.available()) return {};
     RawKey raw = decodeRaw(keyboard.getEvent());
@@ -330,6 +352,7 @@ void stopPlayback()
     mp3_len = 0;
     mp3_pos = 0;
     mp3_eof = false;
+    decoded_chunks = 0;
 }
 
 bool refillInput()
@@ -357,25 +380,36 @@ size_t findSync(size_t start)
     return std::string::npos;
 }
 
-bool startPlayback()
+bool startPlayback(std::string* err = nullptr)
 {
     stopPlayback();
-    if (tracks.empty()) return false;
+    if (tracks.empty()) {
+        if (err) *err = "no tracks";
+        return false;
+    }
     std::string path = selectedPath();
     mp3_file = fopen(path.c_str(), "rb");
-    if (!mp3_file) return false;
+    if (!mp3_file) {
+        if (err) {
+            *err = "open failed: ";
+            *err += std::strerror(errno);
+        }
+        return false;
+    }
     mp3dec_init(&mp3_dec);
     mp3_buf.assign(INPUT_BUF_SIZE, 0);
     mp3_len = 0;
     mp3_pos = 0;
     mp3_eof = false;
     pcm_chunk.clear();
+    decoded_chunks = 0;
     M5.Mic.end();
     M5.Speaker.begin();
     applyVolume();
     playing = true;
     screen = Screen::MusicPlaying;
     dirty = true;
+    blockInput(400);
     return true;
 }
 
@@ -413,12 +447,16 @@ void drawWaveform(const std::vector<int16_t>& pcm, int channels)
     }
 }
 
-bool decodeChunk()
+bool decodeChunk(std::string* err = nullptr)
 {
-    if (!playing || !mp3_file) return false;
+    if (!playing || !mp3_file) {
+        if (err) *err = "not playing";
+        return false;
+    }
     pcm_chunk.clear();
     int target_values = 44100 * 2 * CHUNK_MS / 1000;
     std::vector<mp3d_sample_t> frame_pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);
+    bool saw_sync = false;
     for (int attempts = 0; attempts < 512 && static_cast<int>(pcm_chunk.size()) < target_values;) {
         if (!refillInput()) break;
         size_t sync = findSync(mp3_pos);
@@ -427,6 +465,7 @@ bool decodeChunk()
             mp3_pos = mp3_len;
             continue;
         }
+        saw_sync = true;
         mp3_pos = sync;
         mp3dec_frame_info_t info = {};
         int samples = mp3dec_decode_frame(&mp3_dec, mp3_buf.data() + mp3_pos, static_cast<int>(mp3_len - mp3_pos), frame_pcm.data(), &info);
@@ -443,7 +482,10 @@ bool decodeChunk()
         }
     }
     if (pcm_chunk.empty()) {
-        nextTrack(1);
+        if (err) {
+            if (!saw_sync) *err = mp3_eof ? "no mpeg sync / eof" : "no mpeg sync";
+            else *err = "decode produced no pcm";
+        }
         return false;
     }
     return true;
@@ -453,7 +495,17 @@ void updateAudio()
 {
     if (!playing) return;
     if (M5.Speaker.isPlaying()) return;
-    if (!decodeChunk()) return;
+    std::string err;
+    if (!decodeChunk(&err)) {
+        stopPlayback();
+        message_title = "Playback failed";
+        message_body = err.empty() ? "decode failed" : err;
+        screen = Screen::Message;
+        dirty = true;
+        blockInput(350);
+        return;
+    }
+    ++decoded_chunks;
     if (!display_off) dirty = true;
     M5.Speaker.playRaw(pcm_chunk.data(), pcm_chunk.size(), pcm_rate, pcm_channels == 2, 1, -1, true);
 }
@@ -514,7 +566,7 @@ void drawMusicPlaying()
     canvas.setCursor(8, 24);
     canvas.printf("%.28s", tracks.empty() ? "" : tracks[selected_track].c_str());
     canvas.setCursor(8, 46);
-    canvas.printf("VOL:%s  SHUF:%s", volumeName(), shuffle_on ? "ON" : "OFF");
+    canvas.printf("VOL:%s  SHUF:%s  C:%d", volumeName(), shuffle_on ? "ON" : "OFF", decoded_chunks);
     drawWaveform(pcm_chunk, pcm_channels);
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
     canvas.setCursor(8, 122);
@@ -634,17 +686,30 @@ void handleKey(KeyEvent ev)
         else if (ev.key == Key::Left) nextTrack(-1);
         else if (ev.key == Key::Right) nextTrack(1);
         else if (ev.key == Key::One) shuffle_on = !shuffle_on;
-        else if (ev.key == Key::Ok || ev.key == Key::Home) {
+        else if (ev.key == Key::Ok) {
             if (!tracks.empty()) {
-                if (!startPlayback()) { message_title = "Playback failed"; message_body = "open/decode error"; screen = Screen::Message; }
-            } else if (ev.key == Key::Home) screen = Screen::Launcher;
-        } else if (ev.key == Key::Back) screen = Screen::Launcher;
+                std::string err;
+                if (!startPlayback(&err)) {
+                    message_title = "Playback failed";
+                    message_body = err.empty() ? "open failed" : err;
+                    screen = Screen::Message;
+                    blockInput(350);
+                }
+            }
+        } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            screen = Screen::Launcher;
+            blockInput(250);
+        }
         dirty = true;
         return;
     }
 
     if (screen == Screen::MusicPlaying) {
-        if (ev.key == Key::Ok || ev.key == Key::Home || ev.key == Key::Back) { stopPlayback(); screen = Screen::MusicList; }
+        if (ev.key == Key::Ok || ev.key == Key::Home || ev.key == Key::Back) {
+            stopPlayback();
+            screen = Screen::MusicList;
+            blockInput(300);
+        }
         else if (ev.key == Key::Left) nextTrack(-1);
         else if (ev.key == Key::Right) nextTrack(1);
         else if (ev.key == Key::Up) { volume_mode = static_cast<VolumeMode>(std::min(2, static_cast<int>(volume_mode) + 1)); applyVolume(); }
