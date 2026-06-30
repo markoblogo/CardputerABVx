@@ -111,6 +111,8 @@ bool display_dim = false;
 bool dirty = true;
 bool mp3_probe_pending = false;
 uint32_t mp3_probe_due_ms = 0;
+bool mp3_step_active = false;
+int mp3_step = 0;
 
 FILE* mp3_file = nullptr;
 mp3dec_t mp3_dec;
@@ -793,6 +795,55 @@ bool mp3ProbeEmbedded(std::string* result)
     return true;
 }
 
+void advanceMp3Step()
+{
+    const uint8_t* data = embedded_test01_mp3_start;
+    const size_t len = embedded_test01_mp3_end - embedded_test01_mp3_start;
+    ++mp3_step;
+
+    if (!data || len == 0) {
+        message_title = "MP3 FAIL";
+        message_body = "no asset";
+        mp3_step_active = false;
+        dirty = true;
+        return;
+    }
+
+    if (mp3_step == 1) {
+        message_title = "MP3 S1";
+        message_body = "FIX\n" + std::to_string(len);
+    } else if (mp3_step == 2) {
+        message_title = "MP3 S2";
+        message_body = "INIT";
+        mp3dec_init(&mp3_dec);
+    } else if (mp3_step == 3) {
+        message_title = "MP3 S3";
+        message_body = "DECODE";
+    } else if (mp3_step == 4) {
+        mp3dec_frame_info_t info = {};
+        const size_t sync = EMBEDDED_TEST01_SYNC_OFFSET;
+        const int samples = mp3dec_decode_frame(&mp3_dec, data + sync, static_cast<int>(len - sync), test_frame_pcm, &info);
+        if (samples > 0 && info.frame_bytes > 0 && info.channels > 0 && info.hz > 0) {
+            message_title = "MP3 OK";
+            message_body = "hz=" + std::to_string(info.hz) +
+                           "\nch=" + std::to_string(info.channels) +
+                           "\nsmp=" + std::to_string(samples);
+        } else {
+            message_title = "MP3 FAIL";
+            message_body = "decode\nsmp=" + std::to_string(samples) +
+                           "\nfrm=" + std::to_string(info.frame_bytes);
+        }
+        mp3_step_active = false;
+    } else {
+        message_title = "MP3 STEP";
+        message_body = "done";
+        mp3_step_active = false;
+    }
+    screen = Screen::Message;
+    dirty = true;
+    blockInput(300);
+}
+
 void drawIfDirty()
 {
     if (!dirty || display_off) return;
@@ -879,12 +930,9 @@ void handleKey(KeyEvent ev)
         else if (ev.key == Key::One) shuffle_on = !shuffle_on;
         else if (ev.key == Key::Ok) {
             if (!tracks.empty()) {
-                message_title = "MP3 PROBE";
-                message_body = "RUN queued";
-                screen = Screen::Message;
-                mp3_probe_pending = true;
-                mp3_probe_due_ms = M5.millis() + 700;
-                blockInput(500);
+                mp3_step_active = true;
+                mp3_step = 0;
+                advanceMp3Step();
             }
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
             screen = Screen::Launcher;
@@ -919,7 +967,16 @@ void handleKey(KeyEvent ev)
     }
 
     if (screen == Screen::Message) {
-        if (ev.key == Key::Home || ev.key == Key::Back || ev.key == Key::Ok) screen = Screen::Launcher;
+        if (mp3_step_active && ev.key == Key::Ok) {
+            advanceMp3Step();
+            return;
+        }
+        if (mp3_step_active && (ev.key == Key::Home || ev.key == Key::Back)) {
+            mp3_step_active = false;
+            screen = Screen::MusicList;
+        } else if (ev.key == Key::Home || ev.key == Key::Back || ev.key == Key::Ok) {
+            screen = Screen::Launcher;
+        }
         dirty = true;
     }
 }
