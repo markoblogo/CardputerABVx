@@ -250,6 +250,9 @@ bool initSd()
         spi_ready = true;
     }
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    // Cardputer ADV SD was proven stable at 400 kHz in the earlier ultra-safe firmware.
+    // Keep the minimal firmware conservative until larger file reads are proven.
+    host.max_freq_khz = 400;
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
         .max_files = 5,
@@ -649,19 +652,7 @@ bool mp3ProbeSelected(std::string* result)
     }
 
     const std::string path = selectedPath();
-    showImmediateMessage("MP3 PROBE", "stage: stat\n" + path);
-    M5.delay(350);
-
-    struct stat st = {};
-    if (stat(path.c_str(), &st) != 0) {
-        if (result) {
-            *result = "stat: ";
-            *result += std::strerror(errno);
-        }
-        return false;
-    }
-
-    showImmediateMessage("MP3 PROBE", "stage: open fd\nsize=" + std::to_string(static_cast<long>(st.st_size)));
+    showImmediateMessage("MP3 PROBE", "stage: open fd\n" + path);
     M5.delay(350);
 
     int fd = open(path.c_str(), O_RDONLY);
@@ -673,7 +664,7 @@ bool mp3ProbeSelected(std::string* result)
         return false;
     }
 
-    showImmediateMessage("MP3 PROBE", "stage: read\nsize=" + std::to_string(static_cast<long>(st.st_size)));
+    showImmediateMessage("MP3 PROBE", "stage: read\n" + path);
     M5.delay(350);
 
     std::vector<uint8_t> buf(INPUT_BUF_SIZE, 0);
@@ -723,7 +714,7 @@ bool mp3ProbeSelected(std::string* result)
     M5.Speaker.stop();
 
     if (result) {
-        *result = "size=" + std::to_string(static_cast<long>(st.st_size)) +
+        *result = "read=" + std::to_string(len) +
                   "\noff=" + std::to_string(sync) +
                   " hz=" + std::to_string(info.hz) +
                   "\nch=" + std::to_string(info.channels) +
