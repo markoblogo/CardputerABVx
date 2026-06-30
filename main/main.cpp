@@ -639,9 +639,10 @@ void drawMessage()
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     canvas.setCursor(8, 12);
     canvas.println(message_title.c_str());
-    canvas.setTextSize(1);
+    canvas.setTextSize(2);
     canvas.setCursor(8, 42);
     canvas.println(message_body.c_str());
+    canvas.setTextSize(1);
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
     canvas.setCursor(8, 122);
     canvas.print("GO BACK");
@@ -749,9 +750,8 @@ bool mp3ProbeEmbedded(std::string* result)
     char first_bytes[64];
     snprintf(first_bytes, sizeof(first_bytes), "%02X %02X %02X %02X",
              data[0], data[1], data[2], data[3]);
-    showImmediateMessage("EMBED MP3", "stage: fixed\nbytes=" + std::to_string(len) +
-                                      "\nfirst=" + first_bytes);
-    M5.delay(600);
+    showImmediateMessage("MP3 S1", "FIX\n" + std::to_string(len));
+    M5.delay(900);
 
     const size_t sync = EMBEDDED_TEST01_SYNC_OFFSET;
     if (sync + 4 >= len || data[sync] != 0xFF || (data[sync + 1] & 0xE0) != 0xE0) {
@@ -762,13 +762,17 @@ bool mp3ProbeEmbedded(std::string* result)
         return false;
     }
 
-    showImmediateMessage("EMBED MP3", "stage: decode fixed\noff=" + std::to_string(sync));
-    M5.delay(600);
+    showImmediateMessage("MP3 S2", "ALLOC");
+    M5.delay(900);
 
     mp3dec_t dec;
     mp3dec_init(&dec);
     std::vector<mp3d_sample_t> frame_pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);
     mp3dec_frame_info_t info = {};
+
+    showImmediateMessage("MP3 S3", "DECODE");
+    M5.delay(900);
+
     const int samples = mp3dec_decode_frame(&dec, data + sync, static_cast<int>(len - sync), frame_pcm.data(), &info);
     if (samples <= 0 || info.frame_bytes <= 0 || info.channels <= 0 || info.hz <= 0) {
         if (result) {
