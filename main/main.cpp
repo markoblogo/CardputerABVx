@@ -39,6 +39,7 @@ constexpr int SCREEN_H = 135;
 constexpr int INPUT_BUF_SIZE = 64 * 1024;
 constexpr int CHUNK_MS = 220;
 constexpr uint32_t DEBOUNCE_MS = 180;
+constexpr size_t EMBEDDED_TEST01_SYNC_OFFSET = 44;
 constexpr float PI = 3.14159265358979323846f;
 
 Adafruit_TCA8418 keyboard;
@@ -748,17 +749,20 @@ bool mp3ProbeEmbedded(std::string* result)
     char first_bytes[64];
     snprintf(first_bytes, sizeof(first_bytes), "%02X %02X %02X %02X",
              data[0], data[1], data[2], data[3]);
-    showImmediateMessage("EMBED MP3", "stage: scan\nbytes=" + std::to_string(len) +
+    showImmediateMessage("EMBED MP3", "stage: fixed\nbytes=" + std::to_string(len) +
                                       "\nfirst=" + first_bytes);
     M5.delay(600);
 
-    const size_t sync = findSyncInBytes(data, len);
-    if (sync == std::string::npos) {
-        if (result) *result = "sync: not found";
+    const size_t sync = EMBEDDED_TEST01_SYNC_OFFSET;
+    if (sync + 4 >= len || data[sync] != 0xFF || (data[sync + 1] & 0xE0) != 0xE0) {
+        if (result) {
+            *result = "fixed sync invalid\nsync=" + std::to_string(sync) +
+                      "\nbytes=" + std::to_string(len);
+        }
         return false;
     }
 
-    showImmediateMessage("EMBED MP3", "stage: decode\noff=" + std::to_string(sync));
+    showImmediateMessage("EMBED MP3", "stage: decode fixed\noff=" + std::to_string(sync));
     M5.delay(600);
 
     mp3dec_t dec;
