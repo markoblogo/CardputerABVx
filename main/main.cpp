@@ -1076,10 +1076,14 @@ void handleKey(KeyEvent ev)
         else if (ev.key == Key::One) shuffle_on = !shuffle_on;
         else if (ev.key == Key::Ok) {
             if (!tracks.empty()) {
-                mp3_step_active = true;
-                mp3_step_use_sd = true;
-                mp3_step = 0;
-                advanceMp3Step();
+                std::string err;
+                if (!startPlayback(&err)) {
+                    message_title = "Playback failed";
+                    message_body = err.empty() ? "open failed" : err;
+                    message_returns_music = true;
+                    screen = Screen::Message;
+                    blockInput(500);
+                }
             }
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
             screen = Screen::Launcher;
