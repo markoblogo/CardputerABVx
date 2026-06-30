@@ -45,7 +45,7 @@ bool sd_ready = false;
 
 LGFX_Sprite canvas(&M5.Display);
 
-enum class Screen { Launcher, MusicList, MusicPlaying, RecorderList, Message };
+enum class Screen { Launcher, MusicList, MusicPlaying, RecorderList, RecorderRecording, RecorderPlaying, Message };
 enum class Key { None, Up, Down, Left, Right, Ok, Back, Home, One };
 enum class VolumeMode { Mute = 0, Mid = 1, Loud = 2 };
 
@@ -120,6 +120,17 @@ std::vector<int16_t> pcm_chunk;
 int pcm_rate = 44100;
 int pcm_channels = 2;
 int decoded_chunks = 0;
+
+constexpr int REC_SAMPLE_RATE = 16000;
+constexpr size_t REC_BUFFER_SAMPLES = 512;
+FILE* rec_file = nullptr;
+FILE* rec_play_file = nullptr;
+std::vector<int16_t> rec_buffer;
+uint32_t rec_samples_written = 0;
+uint32_t rec_started_ms = 0;
+uint32_t rec_play_chunks = 0;
+int recorder_cursor = 0;
+std::string active_recording_name;
 
 void flushKeyboardEvents()
 {
@@ -310,6 +321,65 @@ bool hasRecordingExt(const std::string& name)
     return ext == ".wav" || ext == ".pcm";
 }
 
+void writeLe16(FILE* f, uint16_t v)
+{
+    uint8_t b[2] = {static_cast<uint8_t>(v & 0xFF), static_cast<uint8_t>((v >> 8) & 0xFF)};
+    fwrite(b, 1, 2, f);
+}
+
+void writeLe32(FILE* f, uint32_t v)
+{
+    uint8_t b[4] = {static_cast<uint8_t>(v & 0xFF), static_cast<uint8_t>((v >> 8) & 0xFF),
+                    static_cast<uint8_t>((v >> 16) & 0xFF), static_cast<uint8_t>((v >> 24) & 0xFF)};
+    fwrite(b, 1, 4, f);
+}
+
+void writeWavHeader(FILE* f, uint32_t samples)
+{
+    const uint32_t data_bytes = samples * sizeof(int16_t);
+    const uint32_t byte_rate = REC_SAMPLE_RATE * sizeof(int16_t);
+    fseek(f, 0, SEEK_SET);
+    fwrite("RIFF", 1, 4, f);
+    writeLe32(f, 36 + data_bytes);
+    fwrite("WAVEfmt ", 1, 8, f);
+    writeLe32(f, 16);
+    writeLe16(f, 1);
+    writeLe16(f, 1);
+    writeLe32(f, REC_SAMPLE_RATE);
+    writeLe32(f, byte_rate);
+    writeLe16(f, sizeof(int16_t));
+    writeLe16(f, 16);
+    fwrite("data", 1, 4, f);
+    writeLe32(f, data_bytes);
+}
+
+bool ensureRecordingsDir()
+{
+    if (!initSd()) return false;
+    if (mkdir(RECORDINGS_DIR, 0775) != 0 && errno != EEXIST) return false;
+    return true;
+}
+
+std::string nextRecordingName()
+{
+    bool used[1000] = {};
+    for (const auto& name : recordings) {
+        if (name.size() == 11 && name.rfind("REC", 0) == 0 && lowerExt(name) == ".wav") {
+            int n = std::atoi(name.substr(3, 4).c_str());
+            if (n >= 0 && n < 1000) used[n] = true;
+        }
+    }
+    for (int i = 1; i < 1000; ++i) {
+        if (!used[i]) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "REC%04d.WAV", i);
+            return buf;
+        }
+    }
+    return "REC9999.WAV";
+}
+
+
 void scanMusic()
 {
     tracks.clear();
@@ -330,7 +400,7 @@ void scanMusic()
 void scanRecordings()
 {
     recordings.clear();
-    if (!initSd()) return;
+    if (!ensureRecordingsDir()) return;
     DIR* dir = opendir(RECORDINGS_DIR);
     if (!dir) return;
     while (dirent* entry = readdir(dir)) {
@@ -342,6 +412,7 @@ void scanRecordings()
     closedir(dir);
     std::sort(recordings.begin(), recordings.end());
     if (selected_recording >= static_cast<int>(recordings.size())) selected_recording = std::max(0, static_cast<int>(recordings.size()) - 1);
+    recorder_cursor = std::min(recorder_cursor, static_cast<int>(recordings.size()));
 }
 
 std::string selectedPath()
@@ -548,6 +619,142 @@ void updateAudio()
     M5.Speaker.playRaw(pcm_chunk.data(), pcm_chunk.size(), pcm_rate, pcm_channels == 2, 1, -1, true);
 }
 
+
+bool startRecording(std::string* err = nullptr)
+{
+    stopPlayback();
+    if (!ensureRecordingsDir()) {
+        if (err) *err = "no sd/dir";
+        return false;
+    }
+    scanRecordings();
+    active_recording_name = nextRecordingName();
+    const std::string path = std::string(RECORDINGS_DIR) + "/" + active_recording_name;
+    rec_file = fopen(path.c_str(), "wb+");
+    if (!rec_file) {
+        if (err) {
+            *err = "open: ";
+            *err += std::strerror(errno);
+        }
+        return false;
+    }
+    writeWavHeader(rec_file, 0);
+    rec_samples_written = 0;
+    rec_started_ms = M5.millis();
+    rec_buffer.assign(REC_BUFFER_SAMPLES, 0);
+
+    M5.Speaker.end();
+    auto cfg = M5.Mic.config();
+    cfg.magnification = 128;
+    cfg.noise_filter_level = 2;
+    M5.Mic.config(cfg);
+    M5.Mic.begin();
+
+    screen = Screen::RecorderRecording;
+    dirty = true;
+    blockInput(500);
+    return true;
+}
+
+void stopRecording(bool save)
+{
+    while (M5.Mic.isRecording()) {
+        M5.delay(1);
+    }
+    M5.Mic.end();
+    if (rec_file) {
+        if (save) {
+            writeWavHeader(rec_file, rec_samples_written);
+            fflush(rec_file);
+        }
+        fclose(rec_file);
+        rec_file = nullptr;
+    }
+    M5.Speaker.begin();
+    applyVolume();
+    scanRecordings();
+    screen = Screen::RecorderList;
+    dirty = true;
+    blockInput(400);
+}
+
+void updateRecording()
+{
+    if (screen != Screen::RecorderRecording || !rec_file || rec_buffer.empty()) return;
+    if (M5.Mic.record(rec_buffer.data(), rec_buffer.size(), REC_SAMPLE_RATE)) {
+        fwrite(rec_buffer.data(), sizeof(int16_t), rec_buffer.size(), rec_file);
+        rec_samples_written += rec_buffer.size();
+        pcm_chunk = rec_buffer;
+        pcm_channels = 1;
+        pcm_rate = REC_SAMPLE_RATE;
+        if (!display_off) dirty = true;
+    }
+}
+
+std::string selectedRecordingPath()
+{
+    if (recordings.empty() || recorder_cursor <= 0) return "";
+    return std::string(RECORDINGS_DIR) + "/" + recordings[recorder_cursor - 1];
+}
+
+bool startRecordingPlayback(std::string* err = nullptr)
+{
+    stopPlayback();
+    if (recorder_cursor <= 0 || recordings.empty()) {
+        if (err) *err = "no file";
+        return false;
+    }
+    const std::string path = selectedRecordingPath();
+    rec_play_file = fopen(path.c_str(), "rb");
+    if (!rec_play_file) {
+        if (err) {
+            *err = "open: ";
+            *err += std::strerror(errno);
+        }
+        return false;
+    }
+    fseek(rec_play_file, 44, SEEK_SET);
+    rec_buffer.assign(REC_BUFFER_SAMPLES * 4, 0);
+    rec_play_chunks = 0;
+    active_recording_name = recordings[recorder_cursor - 1];
+    M5.Mic.end();
+    M5.Speaker.begin();
+    applyVolume();
+    screen = Screen::RecorderPlaying;
+    dirty = true;
+    blockInput(500);
+    return true;
+}
+
+void stopRecordingPlayback()
+{
+    M5.Speaker.stop();
+    if (rec_play_file) {
+        fclose(rec_play_file);
+        rec_play_file = nullptr;
+    }
+    screen = Screen::RecorderList;
+    dirty = true;
+    blockInput(350);
+}
+
+void updateRecordingPlayback()
+{
+    if (screen != Screen::RecorderPlaying || !rec_play_file) return;
+    if (M5.Speaker.isPlaying()) return;
+    const size_t n = fread(rec_buffer.data(), sizeof(int16_t), rec_buffer.size(), rec_play_file);
+    if (n == 0) {
+        stopRecordingPlayback();
+        return;
+    }
+    pcm_chunk.assign(rec_buffer.begin(), rec_buffer.begin() + n);
+    pcm_channels = 1;
+    pcm_rate = REC_SAMPLE_RATE;
+    ++rec_play_chunks;
+    if (!display_off) dirty = true;
+    M5.Speaker.playRaw(rec_buffer.data(), n, REC_SAMPLE_RATE, false, 1, -1, true);
+}
+
 void drawLauncher()
 {
     static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] TOOLS"};
@@ -625,27 +832,63 @@ void drawRecorderList()
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     canvas.setCursor(8, 8);
-    canvas.printf("REC %d/%d", recordings.empty() ? 0 : selected_recording + 1, static_cast<int>(recordings.size()));
-    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
-    if (recordings.empty()) {
-        canvas.setCursor(8, 42);
-        canvas.println(sd_ready ? "No WAV" : "No SD");
-        canvas.setCursor(8, 68);
-        canvas.println("v0.2");
-    } else {
-        int start = std::max(0, selected_recording - 1);
-        start = std::min(start, std::max(0, static_cast<int>(recordings.size()) - 3));
-        int end = std::min(static_cast<int>(recordings.size()), start + 3);
-        for (int i = start; i < end; ++i) {
-            canvas.setCursor(8, 38 + (i - start) * 24);
-            canvas.setTextColor(i == selected_recording ? TFT_BLACK : TFT_WHITE, i == selected_recording ? TFT_WHITE : TFT_BLACK);
-            canvas.printf("%c %.13s", i == selected_recording ? '>' : ' ', recordings[i].c_str());
+    canvas.printf("REC %d/%d", recorder_cursor + 1, static_cast<int>(recordings.size()) + 1);
+
+    const int total = static_cast<int>(recordings.size()) + 1;
+    int start = std::max(0, recorder_cursor - 1);
+    start = std::min(start, std::max(0, total - 3));
+    int end = std::min(total, start + 3);
+    for (int i = start; i < end; ++i) {
+        canvas.setCursor(8, 38 + (i - start) * 24);
+        canvas.setTextColor(i == recorder_cursor ? TFT_BLACK : TFT_WHITE, i == recorder_cursor ? TFT_WHITE : TFT_BLACK);
+        if (i == 0) {
+            canvas.printf("%c NEW REC", i == recorder_cursor ? '>' : ' ');
+        } else {
+            canvas.printf("%c %.13s", i == recorder_cursor ? '>' : ' ', recordings[i - 1].c_str());
         }
     }
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
     canvas.setCursor(8, 122);
-    canvas.print("REC/PLAY v0.2   GO BACK");
+    canvas.print("OK REC/PLAY   GO BACK");
+    canvas.pushSprite(0, 0);
+}
+
+void drawRecorderRecording()
+{
+    canvas.fillScreen(TFT_BLACK);
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas.setCursor(8, 8);
+    canvas.println("RECORDING");
+    canvas.setCursor(8, 34);
+    canvas.printf("%.14s", active_recording_name.c_str());
+    canvas.setCursor(8, 58);
+    canvas.printf("%lus", static_cast<unsigned long>((M5.millis() - rec_started_ms) / 1000));
+    drawWaveform(pcm_chunk, 1);
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.setCursor(8, 122);
+    canvas.print("OK SAVE   GO SAVE");
+    canvas.pushSprite(0, 0);
+}
+
+void drawRecorderPlaying()
+{
+    canvas.fillScreen(TFT_BLACK);
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas.setCursor(8, 8);
+    canvas.println("REC PLAY");
+    canvas.setCursor(8, 34);
+    canvas.printf("%.14s", active_recording_name.c_str());
+    canvas.setCursor(8, 58);
+    canvas.printf("C:%lu", static_cast<unsigned long>(rec_play_chunks));
+    drawWaveform(pcm_chunk, 1);
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.setCursor(8, 122);
+    canvas.print("OK/GO STOP");
     canvas.pushSprite(0, 0);
 }
 
@@ -673,6 +916,8 @@ void drawIfDirty()
     else if (screen == Screen::MusicList) drawMusicList();
     else if (screen == Screen::MusicPlaying) drawMusicPlaying();
     else if (screen == Screen::RecorderList) drawRecorderList();
+    else if (screen == Screen::RecorderRecording) drawRecorderRecording();
+    else if (screen == Screen::RecorderPlaying) drawRecorderPlaying();
     else drawMessage();
     dirty = false;
 }
@@ -767,10 +1012,40 @@ void handleKey(KeyEvent ev)
     }
 
     if (screen == Screen::RecorderList) {
-        if (ev.key == Key::Up && !recordings.empty()) selected_recording = std::max(0, selected_recording - 1);
-        else if (ev.key == Key::Down && !recordings.empty()) selected_recording = std::min(static_cast<int>(recordings.size()) - 1, selected_recording + 1);
-        else if (ev.key == Key::Ok) { message_title = "Recorder"; message_body = "Record/play in v0.2"; message_returns_music = false; screen = Screen::Message; }
+        const int total = static_cast<int>(recordings.size()) + 1;
+        if (ev.key == Key::Up) recorder_cursor = std::max(0, recorder_cursor - 1);
+        else if (ev.key == Key::Down) recorder_cursor = std::min(total - 1, recorder_cursor + 1);
+        else if (ev.key == Key::Ok) {
+            std::string err;
+            if (recorder_cursor == 0) {
+                if (!startRecording(&err)) {
+                    message_title = "Record failed";
+                    message_body = err.empty() ? "start" : err;
+                    message_returns_music = false;
+                    screen = Screen::Message;
+                }
+            } else {
+                if (!startRecordingPlayback(&err)) {
+                    message_title = "Play failed";
+                    message_body = err.empty() ? "open" : err;
+                    message_returns_music = false;
+                    screen = Screen::Message;
+                }
+            }
+        }
         else if (ev.key == Key::Home || ev.key == Key::Back) screen = Screen::Launcher;
+        dirty = true;
+        return;
+    }
+
+    if (screen == Screen::RecorderRecording) {
+        if (ev.key == Key::Ok || ev.key == Key::Home || ev.key == Key::Back) stopRecording(true);
+        dirty = true;
+        return;
+    }
+
+    if (screen == Screen::RecorderPlaying) {
+        if (ev.key == Key::Ok || ev.key == Key::Home || ev.key == Key::Back) stopRecordingPlayback();
         dirty = true;
         return;
     }
@@ -809,6 +1084,8 @@ extern "C" void app_main(void)
         handleKey(ev);
         drawIfDirty();
         updateAudio();
+        updateRecording();
+        updateRecordingPlayback();
         updatePower();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
