@@ -294,6 +294,9 @@ size_t findSyncInBytes(const uint8_t* data, size_t len)
 {
     for (size_t i = 0; i + 1 < len; ++i) {
         if (data[i] == 0xFF && (data[i + 1] & 0xE0) == 0xE0) return i;
+        if ((i & 0x3FF) == 0) {
+            vTaskDelay(1);
+        }
     }
     return std::string::npos;
 }
@@ -631,11 +634,12 @@ void drawRecorderList()
 void drawMessage()
 {
     canvas.fillScreen(TFT_BLACK);
-    canvas.setTextSize(1);
+    canvas.setTextSize(2);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     canvas.setCursor(8, 12);
     canvas.println(message_title.c_str());
-    canvas.setCursor(8, 34);
+    canvas.setTextSize(1);
+    canvas.setCursor(8, 42);
     canvas.println(message_body.c_str());
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
     canvas.setCursor(8, 122);
@@ -741,8 +745,12 @@ bool mp3ProbeEmbedded(std::string* result)
         return false;
     }
 
-    showImmediateMessage("EMBED MP3", "stage: sync\nbytes=" + std::to_string(len));
-    M5.delay(350);
+    char first_bytes[64];
+    snprintf(first_bytes, sizeof(first_bytes), "%02X %02X %02X %02X",
+             data[0], data[1], data[2], data[3]);
+    showImmediateMessage("EMBED MP3", "stage: scan\nbytes=" + std::to_string(len) +
+                                      "\nfirst=" + first_bytes);
+    M5.delay(600);
 
     const size_t sync = findSyncInBytes(data, len);
     if (sync == std::string::npos) {
@@ -750,41 +758,11 @@ bool mp3ProbeEmbedded(std::string* result)
         return false;
     }
 
-    showImmediateMessage("EMBED MP3", "stage: decode\noff=" + std::to_string(sync));
-    M5.delay(350);
-
-    mp3dec_t dec;
-    mp3dec_init(&dec);
-    std::vector<mp3d_sample_t> frame_pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);
-    mp3dec_frame_info_t info = {};
-    const int samples = mp3dec_decode_frame(&dec, data + sync, static_cast<int>(len - sync), frame_pcm.data(), &info);
-    if (samples <= 0 || info.frame_bytes <= 0 || info.channels <= 0 || info.hz <= 0) {
-        if (result) {
-            *result = "decode: no frame off=";
-            *result += std::to_string(sync);
-        }
-        return false;
-    }
-
-    const size_t values = static_cast<size_t>(samples) * info.channels;
-    showImmediateMessage("EMBED MP3", "stage: speaker\nhz=" + std::to_string(info.hz) +
-                                      " ch=" + std::to_string(info.channels) +
-                                      " samples=" + std::to_string(samples));
-    M5.delay(350);
-
-    M5.Mic.end();
-    M5.Speaker.begin();
-    applyVolume();
-    M5.Speaker.playRaw(frame_pcm.data(), values, info.hz, info.channels == 2, 1, -1, true);
-    M5.Speaker.stop();
-
     if (result) {
         *result = "bytes=" + std::to_string(len) +
-                  "\noff=" + std::to_string(sync) +
-                  " hz=" + std::to_string(info.hz) +
-                  "\nch=" + std::to_string(info.channels) +
-                  " samples=" + std::to_string(samples) +
-                  "\nframe=" + std::to_string(info.frame_bytes);
+                  "\nsync=" + std::to_string(sync) +
+                  "\nfirst=" + first_bytes +
+                  "\ndecode disabled";
     }
     return true;
 }
