@@ -23,7 +23,7 @@ Confirmed on real Cardputer ADV:
   - scans `/sdcard/books` for `.TXT` / `.txt` files;
   - opens English/Russian UTF-8 text best-effort;
   - line and page scrolling;
-  - speed-reading mode: 1 word, 2 words, or line at 200-800 WPM.
+  - speed-reading mode: 1 word, 2 words, or line at 350-1000 WPM.
 - Notes app:
   - stores notes in `/sdcard/notes`;
   - first list item `NEW NOTE` creates a new plain text note;
@@ -103,7 +103,7 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 4. Test Up / Down line scroll.
 5. Test Left / Right page scroll.
 6. Press `1` for speed-reading mode.
-7. Test `OK` pause/resume, Up / Down WPM, Left / Right mode.
+7. Test `OK` pause/resume, Up / Down WPM from 350 to 1000, Left / Right mode.
 8. Press `GO` to return to normal read mode, then list.
 
 ### Notes

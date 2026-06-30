@@ -39,6 +39,9 @@ constexpr int INPUT_BUF_SIZE = 8 * 1024;
 constexpr int CHUNK_MS = 120;
 constexpr size_t MAX_BOOK_BYTES = 128 * 1024;
 constexpr int READER_LINES_PER_PAGE = 4;
+constexpr int SPEED_WPM_MIN = 350;
+constexpr int SPEED_WPM_MAX = 1000;
+constexpr int SPEED_WPM_STEP = 50;
 constexpr uint32_t DEBOUNCE_MS = 180;
 constexpr float PI = 3.14159265358979323846f;
 
@@ -149,7 +152,7 @@ std::vector<std::string> reader_lines;
 std::vector<std::string> reader_words;
 int reader_scroll = 0;
 int speed_index = 0;
-int speed_wpm = 200;
+int speed_wpm = SPEED_WPM_MIN;
 SpeedMode speed_mode = SpeedMode::OneWord;
 bool speed_paused = true;
 uint32_t speed_next_ms = 0;
@@ -632,7 +635,7 @@ bool loadTextFile(const std::string& path, const std::string& label, std::string
     active_book_name = label;
     reader_scroll = 0;
     speed_index = 0;
-    speed_wpm = 200;
+    speed_wpm = SPEED_WPM_MIN;
     speed_mode = SpeedMode::OneWord;
     speed_paused = true;
     speed_next_ms = 0;
@@ -694,6 +697,64 @@ bool saveNewNote(std::string* out_name, std::string* err = nullptr)
     return true;
 }
 
+int utf8Columns(const std::string& text)
+{
+    int cols = 0;
+    for (size_t i = 0; i < text.size();) {
+        size_t len = utf8CharLen(static_cast<unsigned char>(text[i]));
+        if (i + len > text.size()) len = 1;
+        ++cols;
+        i += len;
+    }
+    return cols;
+}
+
+int countWordsInLine(const std::string& line)
+{
+    int words = 0;
+    bool in_word = false;
+    for (unsigned char c : line) {
+        bool ws = c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        if (!ws && !in_word) {
+            ++words;
+            in_word = true;
+        }
+        if (ws) in_word = false;
+    }
+    return std::max(1, words);
+}
+
+int wordIndexForLine(int line_idx)
+{
+    int idx = 0;
+    int limit = std::max(0, std::min(line_idx, static_cast<int>(reader_lines.size())));
+    for (int i = 0; i < limit; ++i) idx += countWordsInLine(reader_lines[i]);
+    return std::min(idx, std::max(0, static_cast<int>(reader_words.size()) - 1));
+}
+
+int lineIndexForWord(int word_idx)
+{
+    int seen = 0;
+    for (int i = 0; i < static_cast<int>(reader_lines.size()); ++i) {
+        seen += countWordsInLine(reader_lines[i]);
+        if (word_idx < seen) return i;
+    }
+    return std::max(0, static_cast<int>(reader_lines.size()) - 1);
+}
+
+void setSpeedMode(SpeedMode next)
+{
+    if (next == speed_mode) return;
+    if (speed_mode == SpeedMode::Line && next != SpeedMode::Line) {
+        speed_index = wordIndexForLine(speed_index);
+    } else if (speed_mode != SpeedMode::Line && next == SpeedMode::Line) {
+        speed_index = lineIndexForWord(speed_index);
+    }
+    speed_mode = next;
+    int max_idx = speed_mode == SpeedMode::Line ? static_cast<int>(reader_lines.size()) - 1 : static_cast<int>(reader_words.size()) - 1;
+    speed_index = std::max(0, std::min(speed_index, std::max(0, max_idx)));
+}
+
 int speedStepWords()
 {
     return speed_mode == SpeedMode::TwoWords ? 2 : 1;
@@ -704,13 +765,7 @@ uint32_t speedIntervalMs()
     if (speed_mode == SpeedMode::Line) {
         int words = 1;
         if (speed_index >= 0 && speed_index < static_cast<int>(reader_lines.size())) {
-            words = 1;
-            bool in_word = false;
-            for (unsigned char c : reader_lines[speed_index]) {
-                bool ws = c == ' ' || c == '\t' || c == '\r' || c == '\n';
-                if (!ws && !in_word) { ++words; in_word = true; }
-                if (ws) in_word = false;
-            }
+            words = countWordsInLine(reader_lines[speed_index]);
         }
         return std::max<uint32_t>(120, static_cast<uint32_t>(60000UL * words / speed_wpm));
     }
@@ -1384,29 +1439,46 @@ std::string currentSpeedText()
     return out;
 }
 
+void drawCenteredText(const std::string& text, int y, int text_size, uint16_t color)
+{
+    int cols = utf8Columns(text);
+    int width = cols * 6 * text_size;
+    int x = std::max(0, (SCREEN_W - width) / 2);
+    canvas.setTextSize(text_size);
+    canvas.setTextColor(color, TFT_BLACK);
+    canvas.setCursor(x, y);
+    canvas.print(text.c_str());
+}
+
 void drawReaderSpeed()
 {
     canvas.fillScreen(TFT_BLACK);
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
-    canvas.setCursor(8, 8);
-    canvas.printf("SPEED %s", speedModeName());
-    canvas.setCursor(8, 32);
+    canvas.setCursor(8, 6);
+    canvas.print("SPEED");
+    canvas.setCursor(92, 6);
+    canvas.printf("%s", speedModeName());
+    canvas.setCursor(8, 30);
     canvas.printf("%d WPM", speed_wpm);
-    canvas.setTextColor(speed_paused ? TFT_DARKGREY : TFT_WHITE, TFT_BLACK);
-    canvas.setCursor(8, 66);
+    canvas.setCursor(136, 30);
+    canvas.print(speed_paused ? "PAUSE" : "RUN");
+
     std::string text = currentSpeedText();
-    canvas.printf("%.18s", text.c_str());
+    int cols = utf8Columns(text);
+    int size = cols <= 10 ? 3 : 2;
+    if (text.size() > 48) text = text.substr(0, 48);
+    drawCenteredText(text, size == 3 ? 62 : 66, size, speed_paused ? TFT_DARKGREY : TFT_WHITE);
+
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    canvas.setCursor(8, 104);
-    canvas.printf("%s %d/%d", speed_paused ? "PAUSE" : "RUN", speed_index + 1,
-                  speed_mode == SpeedMode::Line ? static_cast<int>(reader_lines.size()) : static_cast<int>(reader_words.size()));
+    canvas.setCursor(8, 106);
+    int total = speed_mode == SpeedMode::Line ? static_cast<int>(reader_lines.size()) : static_cast<int>(reader_words.size());
+    canvas.printf("POS %d/%d", std::min(speed_index + 1, std::max(1, total)), total);
     canvas.setCursor(8, 122);
-    canvas.print("OK PAUSE  UP/DN WPM  L/R MODE");
+    canvas.print("OK RUN/PAUSE  UP/DN WPM  L/R MODE");
     canvas.pushSprite(0, 0);
 }
-
 
 void drawMessage()
 {
@@ -1588,7 +1660,8 @@ void handleKey(KeyEvent ev)
         else if (ev.key == Key::Left) reader_scroll = std::max(0, reader_scroll - READER_LINES_PER_PAGE);
         else if (ev.key == Key::Right) reader_scroll = std::min(max_scroll, reader_scroll + READER_LINES_PER_PAGE);
         else if (ev.key == Key::One) {
-            speed_index = std::min(reader_scroll, std::max(0, static_cast<int>(reader_words.size()) - 1));
+            speed_mode = SpeedMode::OneWord;
+            speed_index = wordIndexForLine(reader_scroll);
             speed_paused = true;
             speed_next_ms = M5.millis() + speedIntervalMs();
             screen = Screen::ReaderSpeed;
@@ -1605,18 +1678,17 @@ void handleKey(KeyEvent ev)
         if (ev.key == Key::Ok) {
             speed_paused = !speed_paused;
             speed_next_ms = M5.millis() + speedIntervalMs();
-        } else if (ev.key == Key::Up) speed_wpm = std::min(800, speed_wpm + 50);
-        else if (ev.key == Key::Down) speed_wpm = std::max(200, speed_wpm - 50);
+        } else if (ev.key == Key::Up) speed_wpm = std::min(SPEED_WPM_MAX, speed_wpm + SPEED_WPM_STEP);
+        else if (ev.key == Key::Down) speed_wpm = std::max(SPEED_WPM_MIN, speed_wpm - SPEED_WPM_STEP);
         else if (ev.key == Key::Left) {
             int mode = static_cast<int>(speed_mode);
-            speed_mode = static_cast<SpeedMode>((mode + 2) % 3);
-            speed_index = std::min(speed_index, speed_mode == SpeedMode::Line ? std::max(0, static_cast<int>(reader_lines.size()) - 1) : std::max(0, static_cast<int>(reader_words.size()) - 1));
+            setSpeedMode(static_cast<SpeedMode>((mode + 2) % 3));
         } else if (ev.key == Key::Right) {
             int mode = static_cast<int>(speed_mode);
-            speed_mode = static_cast<SpeedMode>((mode + 1) % 3);
-            speed_index = std::min(speed_index, speed_mode == SpeedMode::Line ? std::max(0, static_cast<int>(reader_lines.size()) - 1) : std::max(0, static_cast<int>(reader_words.size()) - 1));
+            setSpeedMode(static_cast<SpeedMode>((mode + 1) % 3));
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
-            if (speed_mode == SpeedMode::Line) reader_scroll = std::min(speed_index, std::max(0, static_cast<int>(reader_lines.size()) - READER_LINES_PER_PAGE));
+            reader_scroll = speed_mode == SpeedMode::Line ? speed_index : lineIndexForWord(speed_index);
+            reader_scroll = std::min(reader_scroll, std::max(0, static_cast<int>(reader_lines.size()) - READER_LINES_PER_PAGE));
             screen = Screen::ReaderView;
             blockInput(250);
         }
