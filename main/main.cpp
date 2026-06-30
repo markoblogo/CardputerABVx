@@ -6,8 +6,10 @@
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
+#include <fcntl.h>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 #include <driver/sdspi_host.h>
@@ -103,6 +105,8 @@ uint32_t last_input_ms = 0;
 bool display_off = false;
 bool display_dim = false;
 bool dirty = true;
+bool mp3_probe_pending = false;
+uint32_t mp3_probe_due_ms = 0;
 
 FILE* mp3_file = nullptr;
 mp3dec_t mp3_dec;
@@ -645,26 +649,42 @@ bool mp3ProbeSelected(std::string* result)
     }
 
     const std::string path = selectedPath();
-    showImmediateMessage("MP3 PROBE", "stage: open\n" + path);
+    showImmediateMessage("MP3 PROBE", "stage: stat\n" + path);
     M5.delay(350);
 
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) {
+    struct stat st = {};
+    if (stat(path.c_str(), &st) != 0) {
         if (result) {
-            *result = "open: ";
+            *result = "stat: ";
             *result += std::strerror(errno);
         }
         return false;
     }
 
-    fseek(f, 0, SEEK_END);
-    const long file_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    showImmediateMessage("MP3 PROBE", "stage: open fd\nsize=" + std::to_string(static_cast<long>(st.st_size)));
+    M5.delay(350);
+
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        if (result) {
+            *result = "open fd: ";
+            *result += std::strerror(errno);
+        }
+        return false;
+    }
+
+    showImmediateMessage("MP3 PROBE", "stage: read\nsize=" + std::to_string(static_cast<long>(st.st_size)));
+    M5.delay(350);
+
     std::vector<uint8_t> buf(INPUT_BUF_SIZE, 0);
-    const size_t len = fread(buf.data(), 1, buf.size(), f);
-    fclose(f);
+    const ssize_t read_len = read(fd, buf.data(), buf.size());
+    close(fd);
+    const size_t len = read_len > 0 ? static_cast<size_t>(read_len) : 0;
     if (len == 0) {
-        if (result) *result = "read: empty";
+        if (result) {
+            *result = "read: ";
+            *result += read_len < 0 ? std::strerror(errno) : "empty";
+        }
         return false;
     }
 
@@ -703,7 +723,7 @@ bool mp3ProbeSelected(std::string* result)
     M5.Speaker.stop();
 
     if (result) {
-        *result = "size=" + std::to_string(file_size) +
+        *result = "size=" + std::to_string(static_cast<long>(st.st_size)) +
                   "\noff=" + std::to_string(sync) +
                   " hz=" + std::to_string(info.hz) +
                   "\nch=" + std::to_string(info.channels) +
@@ -722,6 +742,24 @@ void drawIfDirty()
     else if (screen == Screen::RecorderList) drawRecorderList();
     else drawMessage();
     dirty = false;
+}
+
+void processPendingProbe()
+{
+    if (!mp3_probe_pending || M5.millis() < mp3_probe_due_ms) return;
+    mp3_probe_pending = false;
+
+    std::string result;
+    if (mp3ProbeSelected(&result)) {
+        message_title = "MP3 Probe OK";
+        message_body = result;
+    } else {
+        message_title = "MP3 Probe FAIL";
+        message_body = result.empty() ? "unknown" : result;
+    }
+    screen = Screen::Message;
+    dirty = true;
+    blockInput(500);
 }
 
 void updatePower()
@@ -781,15 +819,11 @@ void handleKey(KeyEvent ev)
         else if (ev.key == Key::One) shuffle_on = !shuffle_on;
         else if (ev.key == Key::Ok) {
             if (!tracks.empty()) {
-                std::string result;
-                if (mp3ProbeSelected(&result)) {
-                    message_title = "MP3 Probe OK";
-                    message_body = result;
-                } else {
-                    message_title = "MP3 Probe FAIL";
-                    message_body = result.empty() ? "unknown" : result;
-                }
+                message_title = "MP3 PROBE";
+                message_body = "RUN queued";
                 screen = Screen::Message;
+                mp3_probe_pending = true;
+                mp3_probe_due_ms = M5.millis() + 700;
                 blockInput(500);
             }
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
@@ -853,6 +887,7 @@ extern "C" void app_main(void)
         updateAudio();
         updatePower();
         drawIfDirty();
+        processPendingProbe();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
