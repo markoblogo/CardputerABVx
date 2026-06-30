@@ -126,6 +126,8 @@ int pcm_rate = 44100;
 int pcm_channels = 2;
 int decoded_chunks = 0;
 mp3d_sample_t test_frame_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+uint8_t test_mp3_input[8192];
+size_t test_mp3_input_len = 0;
 
 void flushKeyboardEvents()
 {
@@ -820,9 +822,27 @@ void advanceMp3Step()
         message_title = "MP3 S3";
         message_body = "DECODE";
     } else if (mp3_step == 4) {
-        mp3dec_frame_info_t info = {};
         const size_t sync = EMBEDDED_TEST01_SYNC_OFFSET;
-        const int samples = mp3dec_decode_frame(&mp3_dec, data + sync, static_cast<int>(len - sync), test_frame_pcm, &info);
+        if (sync >= len) {
+            message_title = "MP3 FAIL";
+            message_body = "bad sync";
+            mp3_step_active = false;
+        } else {
+            test_mp3_input_len = std::min(sizeof(test_mp3_input), len - sync);
+            memcpy(test_mp3_input, data + sync, test_mp3_input_len);
+            message_title = "MP3 S4";
+            message_body = "COPY\n" + std::to_string(test_mp3_input_len);
+        }
+    } else if (mp3_step == 5) {
+        mp3dec_frame_info_t info = {};
+        if (test_mp3_input_len == 0) {
+            message_title = "MP3 FAIL";
+            message_body = "no input";
+            mp3_step_active = false;
+            dirty = true;
+            return;
+        }
+        const int samples = mp3dec_decode_frame(&mp3_dec, test_mp3_input, static_cast<int>(test_mp3_input_len), test_frame_pcm, &info);
         if (samples > 0 && info.frame_bytes > 0 && info.channels > 0 && info.hz > 0) {
             message_title = "MP3 OK";
             message_body = "hz=" + std::to_string(info.hz) +
