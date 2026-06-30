@@ -758,11 +758,31 @@ bool mp3ProbeEmbedded(std::string* result)
         return false;
     }
 
+    showImmediateMessage("EMBED MP3", "stage: decode\noff=" + std::to_string(sync));
+    M5.delay(600);
+
+    mp3dec_t dec;
+    mp3dec_init(&dec);
+    std::vector<mp3d_sample_t> frame_pcm(MINIMP3_MAX_SAMPLES_PER_FRAME);
+    mp3dec_frame_info_t info = {};
+    const int samples = mp3dec_decode_frame(&dec, data + sync, static_cast<int>(len - sync), frame_pcm.data(), &info);
+    if (samples <= 0 || info.frame_bytes <= 0 || info.channels <= 0 || info.hz <= 0) {
+        if (result) {
+            *result = "decode failed" +
+                      std::string("\noff=") + std::to_string(sync) +
+                      "\nsamples=" + std::to_string(samples) +
+                      "\nframe=" + std::to_string(info.frame_bytes);
+        }
+        return false;
+    }
+
     if (result) {
         *result = "bytes=" + std::to_string(len) +
                   "\nsync=" + std::to_string(sync) +
-                  "\nfirst=" + first_bytes +
-                  "\ndecode disabled";
+                  "\nhz=" + std::to_string(info.hz) +
+                  " ch=" + std::to_string(info.channels) +
+                  "\nsamples=" + std::to_string(samples) +
+                  "\nframe=" + std::to_string(info.frame_bytes);
     }
     return true;
 }
