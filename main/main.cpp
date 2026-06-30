@@ -128,6 +128,9 @@ int decoded_chunks = 0;
 mp3d_sample_t test_frame_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
 uint8_t test_mp3_input[8192];
 size_t test_mp3_input_len = 0;
+int test_frame_values = 0;
+int test_frame_rate = 44100;
+int test_frame_channels = 2;
 
 void flushKeyboardEvents()
 {
@@ -844,6 +847,9 @@ void advanceMp3Step()
         }
         const int samples = mp3dec_decode_frame(&mp3_dec, test_mp3_input, static_cast<int>(test_mp3_input_len), test_frame_pcm, &info);
         if (samples > 0 && info.frame_bytes > 0 && info.channels > 0 && info.hz > 0) {
+            test_frame_values = samples * info.channels;
+            test_frame_rate = info.hz;
+            test_frame_channels = info.channels;
             message_title = "MP3 OK";
             message_body = "hz=" + std::to_string(info.hz) +
                            "\nch=" + std::to_string(info.channels) +
@@ -853,7 +859,25 @@ void advanceMp3Step()
             message_body = "decode\nsmp=" + std::to_string(samples) +
                            "\nfrm=" + std::to_string(info.frame_bytes);
         }
-        mp3_step_active = false;
+    } else if (mp3_step == 6) {
+        if (test_frame_values <= 0) {
+            message_title = "SPK FAIL";
+            message_body = "no pcm";
+            mp3_step_active = false;
+        } else {
+            message_title = "SPK";
+            message_body = "PLAY";
+            screen = Screen::Message;
+            drawMessage();
+            M5.Mic.end();
+            M5.Speaker.begin();
+            applyVolume();
+            M5.Speaker.playRaw(test_frame_pcm, test_frame_values, test_frame_rate, test_frame_channels == 2, 1, -1, true);
+            M5.Speaker.stop();
+            message_title = "SPK OK";
+            message_body = "played\n" + std::to_string(test_frame_values);
+            mp3_step_active = false;
+        }
     } else {
         message_title = "MP3 STEP";
         message_body = "done";
