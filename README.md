@@ -150,6 +150,6 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 - Notes input supports latin text plus RU transliteration save mode; the edit screen shows latin translit because the current large font does not render Cyrillic. Punctuation is still limited by Cardputer arrow-key mappings.
 - Recordings use `/sdcard/rec` instead of `/sdcard/recordings` because FATFS long filenames are not enabled yet.
 - Music playback is chunk/blocking-based; controls may have small latency.
-- Time clock is runtime/manual only; no Mac sync or RTC persistence yet.
+- Time block is implemented for this stage: manual runtime clock, stopwatch, timer, and alarm. Full power-off resets time; future Mac sync should set time once during sync.
 - Screen-off playback/power optimization is not finalized yet.
 - Dev diagnostics were removed from the normal build after proving MP3 decode/speaker path.
