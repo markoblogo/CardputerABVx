@@ -53,7 +53,7 @@ bool sd_ready = false;
 
 LGFX_Sprite canvas(&M5.Display);
 
-enum class Screen { Launcher, MusicList, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, RecorderList, RecorderRecording, RecorderPlaying, TimeApp, Message };
+enum class Screen { Launcher, MusicList, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, RecorderList, RecorderRecording, RecorderPlaying, TimeApp, FilesList, Message };
 enum class Key { None, Up, Down, Left, Right, Ok, Back, Home, One, Backspace };
 enum class VolumeMode { Mute = 0, Mid = 1, Loud = 2 };
 enum class SpeedMode { OneWord = 0, TwoWords = 1, Line = 2 };
@@ -63,6 +63,13 @@ enum class TimeSetField { Hours = 0, Minutes = 1, Seconds = 2 };
 struct KeyEvent {
     Key key = Key::None;
     const char* name = "";
+};
+
+struct FileEntry {
+    std::string name;
+    std::string path;
+    bool is_dir = false;
+    size_t size = 0;
 };
 
 struct RawKey {
@@ -113,7 +120,11 @@ std::vector<std::string> tracks;
 std::vector<std::string> books;
 std::vector<std::string> notes;
 std::vector<std::string> recordings;
+std::vector<FileEntry> file_entries;
+std::string files_path = MOUNT_POINT;
+int files_cursor = 0;
 int selected_track = 0;
+std::string override_music_path;
 int selected_book = 0;
 int notes_cursor = 0;
 int selected_recording = 0;
@@ -373,6 +384,54 @@ bool hasRecordingExt(const std::string& name)
 {
     const std::string ext = lowerExt(name);
     return ext == ".wav" || ext == ".pcm";
+}
+
+
+std::string baseName(const std::string& path)
+{
+    size_t slash = path.find_last_of('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+bool isKnownFileExt(const std::string& name)
+{
+    return hasMp3Ext(name) || hasTextExt(name) || hasRecordingExt(name);
+}
+
+void scanFiles(const std::string& path)
+{
+    file_entries.clear();
+    files_path = path.empty() ? std::string(MOUNT_POINT) : path;
+    files_cursor = 0;
+    if (!initSd()) return;
+    DIR* dir = opendir(files_path.c_str());
+    if (!dir) return;
+    if (files_path != MOUNT_POINT) {
+        file_entries.push_back({"..", "", true, 0});
+    }
+    while (dirent* entry = readdir(dir)) {
+        std::string name = entry->d_name;
+        if (isHidden(name)) continue;
+        std::string full = files_path + "/" + name;
+        struct stat st = {};
+        if (stat(full.c_str(), &st) != 0) continue;
+        bool dir_flag = S_ISDIR(st.st_mode) || entry->d_type == DT_DIR;
+        if (!dir_flag && !isKnownFileExt(name)) continue;
+        file_entries.push_back({name, full, dir_flag, static_cast<size_t>(st.st_size)});
+    }
+    closedir(dir);
+    std::sort(file_entries.begin() + (files_path == MOUNT_POINT ? 0 : 1), file_entries.end(), [](const FileEntry& a, const FileEntry& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        return a.name < b.name;
+    });
+}
+
+std::string parentPath(const std::string& path)
+{
+    if (path == MOUNT_POINT) return MOUNT_POINT;
+    size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos || slash <= std::strlen(MOUNT_POINT)) return MOUNT_POINT;
+    return path.substr(0, slash);
 }
 
 void writeLe16(FILE* f, uint16_t v)
@@ -1009,7 +1068,7 @@ bool startPlayback(std::string* err = nullptr)
         if (err) *err = "no tracks";
         return false;
     }
-    std::string path = selectedPath();
+    std::string path = override_music_path.empty() ? selectedPath() : override_music_path;
     mp3_file = fopen(path.c_str(), "rb");
     if (!mp3_file) {
         if (err) {
@@ -1282,7 +1341,7 @@ void updateRecordingPlayback()
 
 void drawLauncher()
 {
-    static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] TOOLS"};
+    static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] FILES"};
     canvas.fillScreen(TFT_BLACK);
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -1340,7 +1399,7 @@ void drawMusicPlaying()
     canvas.setCursor(8, 8);
     canvas.println("PLAYING");
     canvas.setCursor(8, 34);
-    canvas.printf("%.14s", tracks.empty() ? "" : tracks[selected_track].c_str());
+    canvas.printf("%.14s", !override_music_path.empty() ? baseName(override_music_path).c_str() : (tracks.empty() ? "" : tracks[selected_track].c_str()));
     canvas.setCursor(8, 58);
     canvas.printf("V:%s S:%s C:%d", volumeName(), shuffle_on ? "ON" : "OFF", decoded_chunks);
     drawWaveform(pcm_chunk, pcm_channels);
@@ -1920,6 +1979,84 @@ void updateTimeApp()
     }
 }
 
+
+void drawFilesList()
+{
+    canvas.fillScreen(TFT_BLACK);
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas.setCursor(8, 8);
+    canvas.printf("FILES %d/%d", file_entries.empty() ? 0 : files_cursor + 1, static_cast<int>(file_entries.size()));
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.setCursor(8, 30);
+    canvas.printf("%.28s", files_path == MOUNT_POINT ? "/" : files_path.substr(std::strlen(MOUNT_POINT)).c_str());
+    if (file_entries.empty()) {
+        canvas.setTextSize(2);
+        canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+        canvas.setCursor(8, 54);
+        canvas.print(sd_ready ? "EMPTY" : "NO SD");
+    } else {
+        int rows = 4;
+        int start = std::max(0, files_cursor - 1);
+        start = std::min(start, std::max(0, static_cast<int>(file_entries.size()) - rows));
+        int end = std::min(static_cast<int>(file_entries.size()), start + rows);
+        canvas.setTextSize(2);
+        for (int i = start; i < end; ++i) {
+            const auto& e = file_entries[i];
+            canvas.setCursor(8, 42 + (i - start) * 20);
+            canvas.setTextColor(i == files_cursor ? TFT_BLACK : TFT_WHITE, i == files_cursor ? TFT_WHITE : TFT_BLACK);
+            canvas.printf("%c%c%.12s", i == files_cursor ? '>' : ' ', e.is_dir ? '/' : ' ', e.name.c_str());
+        }
+    }
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.setCursor(8, 122);
+    canvas.print("OK OPEN  GO BACK  KNOWN FILES");
+    canvas.pushSprite(0, 0);
+}
+
+bool openFileEntry(const FileEntry& e, std::string* err = nullptr)
+{
+    if (e.is_dir) {
+        if (e.name == "..") scanFiles(parentPath(files_path));
+        else scanFiles(e.path);
+        screen = Screen::FilesList;
+        return true;
+    }
+    std::string ext = lowerExt(e.name);
+    if (ext == ".txt") {
+        active_book_name = e.name;
+        active_note_name = e.name;
+        if (!loadTextFile(e.path, e.name, err)) return false;
+        screen = e.path.rfind(std::string(NOTES_DIR) + "/", 0) == 0 ? Screen::NotesView : Screen::ReaderView;
+        return true;
+    }
+    if (ext == ".mp3") {
+        override_music_path = e.path;
+        if (!startPlayback(err)) return false;
+        return true;
+    }
+    if (ext == ".wav" || ext == ".pcm") {
+        rec_play_file = fopen(e.path.c_str(), "rb");
+        if (!rec_play_file) {
+            if (err) { *err = "open: "; *err += std::strerror(errno); }
+            return false;
+        }
+        fseek(rec_play_file, 44, SEEK_SET);
+        rec_buffer.assign(REC_BUFFER_SAMPLES * 4, 0);
+        rec_play_chunks = 0;
+        active_recording_name = e.name;
+        M5.Mic.end();
+        M5.Speaker.begin();
+        applyVolume();
+        screen = Screen::RecorderPlaying;
+        return true;
+    }
+    if (err) *err = "unsupported";
+    return false;
+}
+
 void drawMessage()
 {
     canvas.fillScreen(TFT_BLACK);
@@ -1953,6 +2090,7 @@ void drawIfDirty()
     else if (screen == Screen::RecorderRecording) drawRecorderRecording();
     else if (screen == Screen::RecorderPlaying) drawRecorderPlaying();
     else if (screen == Screen::TimeApp) drawTimeApp();
+    else if (screen == Screen::FilesList) drawFilesList();
     else drawMessage();
     dirty = false;
 }
@@ -2022,6 +2160,7 @@ void handleKey(KeyEvent ev)
             else if (launcher_index == 2) { scanNotes(); screen = Screen::NotesList; }
             else if (launcher_index == 3) { scanRecordings(); screen = Screen::RecorderList; }
             else if (launcher_index == 4) { time_mode = TimeMode::Clock; clock_base_ms = M5.millis(); screen = Screen::TimeApp; blockInput(250); }
+            else if (launcher_index == 5) { scanFiles(MOUNT_POINT); screen = Screen::FilesList; blockInput(250); }
             else { message_title = "Coming soon"; message_body = "Music/Reader/Record"; message_returns_music = false; screen = Screen::Message; }
         }
         dirty = true;
@@ -2036,6 +2175,7 @@ void handleKey(KeyEvent ev)
         else if (ev.key == Key::One) shuffle_on = !shuffle_on;
         else if (ev.key == Key::Ok) {
             if (!tracks.empty()) {
+                override_music_path.clear();
                 std::string err;
                 if (!startPlayback(&err)) {
                     message_title = "Playback failed";
@@ -2339,6 +2479,28 @@ void handleKey(KeyEvent ev)
             else if (time_mode == TimeMode::Alarm) { alarm_seconds = (alarm_seconds + 86400 - step) % 86400; alarm_ringing = false; }
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
             screen = Screen::Launcher;
+            blockInput(250);
+        }
+        dirty = true;
+        return;
+    }
+
+    if (screen == Screen::FilesList) {
+        if (ev.key == Key::Up && !file_entries.empty()) files_cursor = std::max(0, files_cursor - 1);
+        else if (ev.key == Key::Down && !file_entries.empty()) files_cursor = std::min(static_cast<int>(file_entries.size()) - 1, files_cursor + 1);
+        else if (ev.key == Key::Left && !file_entries.empty()) files_cursor = std::max(0, files_cursor - 4);
+        else if (ev.key == Key::Right && !file_entries.empty()) files_cursor = std::min(static_cast<int>(file_entries.size()) - 1, files_cursor + 4);
+        else if (ev.key == Key::Ok && !file_entries.empty()) {
+            std::string err;
+            if (!openFileEntry(file_entries[files_cursor], &err)) {
+                message_title = "Open failed";
+                message_body = err.empty() ? "unsupported" : err;
+                screen = Screen::Message;
+            }
+            blockInput(350);
+        } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            if (files_path == MOUNT_POINT) screen = Screen::Launcher;
+            else scanFiles(parentPath(files_path));
             blockInput(250);
         }
         dirty = true;

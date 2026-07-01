@@ -31,6 +31,10 @@ Confirmed on real Cardputer ADV:
   - editor supports `LAT` mode and `RU` translit-save mode toggled by `1`;
   - saves files as `NOTE0001.TXT`, `NOTE0002.TXT`, etc.;
   - opens saved notes using the same readable text viewer.
+- Files app:
+  - browses SD folders and known file types;
+  - opens `.MP3`, `.TXT`, and `.WAV` files through existing Music/Reader/Notes/Record paths;
+  - delete/rename are intentionally not implemented yet.
 - Time app:
   - includes Clock, Stopwatch, Timer, and Alarm modes;
   - Left / Right switches mode;
@@ -124,6 +128,14 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 6. Confirm `NOTE0001.TXT` appears.
 7. Press `OK` on the saved note to read it.
 
+### Files
+
+1. Open Files.
+2. Navigate folders with Up / Down and OK.
+3. GO backs out of folders, then launcher.
+4. Open `.TXT`, `.MP3`, and `.WAV` files if available.
+5. Confirm unknown files are hidden or not opened.
+
 ### Time
 
 1. Open Time.
@@ -150,6 +162,7 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 - Notes input supports latin text plus RU transliteration save mode; the edit screen shows latin translit because the current large font does not render Cyrillic. Punctuation is still limited by Cardputer arrow-key mappings.
 - Recordings use `/sdcard/rec` instead of `/sdcard/recordings` because FATFS long filenames are not enabled yet.
 - Music playback is chunk/blocking-based; controls may have small latency.
+- Files MVP is read/open only; delete and rename are postponed.
 - Time block is implemented for this stage: manual runtime clock, stopwatch, timer, and alarm. Full power-off resets time; future Mac sync should set time once during sync.
 - Screen-off playback/power optimization is not finalized yet.
 - Dev diagnostics were removed from the normal build after proving MP3 decode/speaker path.
