@@ -205,9 +205,18 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 ### Connections
 
 1. Open Connections.
-2. Confirm it shows `WiFi Transfer`, `Bluetooth later`, and `USB later`.
-3. Press `OK`; it should show `WiFi Transfer / AP HTTP later`.
-4. Press `GO` to return.
+2. Press `OK` on `WiFi Transfer`.
+3. Confirm it shows:
+   - `SSID: ABVX-Cardputer`
+   - `PASS: cardputer`
+   - `URL: http://192.168.4.1`
+   - `AP:ON HTTP:ON`
+4. On the Mac, connect Wi-Fi to `ABVX-Cardputer` with password `cardputer`.
+5. Open `http://192.168.4.1/`.
+6. Test `http://192.168.4.1/api/ping`; expected response: `OK PING`.
+7. Test `http://192.168.4.1/api/status`; expected response starts with `OK STATUS`.
+8. Confirm `REQ` and `LAST` update on Cardputer.
+9. Press `GO`; AP should stop and launcher should return.
 
 ### Record
 
@@ -227,7 +236,8 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 - Recordings use `/sdcard/rec` instead of `/sdcard/recordings` because FATFS long filenames are not enabled yet.
 - Music playback is chunk/blocking-based; controls may have small latency.
 - Files MVP is read/open only; delete and rename are postponed.
-- Future Transfer/Connections app should provide Wi-Fi AP + HTTP file manager for moving arbitrary files to/from SD without removing the card.
+- Connections currently provides Wi-Fi AP ping/status MVP only. It does not list, upload, download, or delete files yet.
+- Future Transfer/Connections app should extend this into an HTTP file manager for moving arbitrary files to/from SD without removing the card.
 - Connections transfer target:
   - Cardputer starts AP mode, e.g. `ABVX-Cardputer`;
   - Mac opens a simple browser file manager;

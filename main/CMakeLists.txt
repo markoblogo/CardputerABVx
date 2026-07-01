@@ -11,6 +11,11 @@ idf_component_register(
         minimp3
         esp_driver_spi
         esp_driver_gpio
+        esp_event
+        esp_http_server
+        esp_netif
+        esp_wifi
         fatfs
+        nvs_flash
         sdmmc
 )

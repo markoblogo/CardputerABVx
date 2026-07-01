@@ -15,9 +15,14 @@
 
 #include <driver/sdspi_host.h>
 #include <driver/spi_master.h>
+#include <esp_event.h>
+#include <esp_http_server.h>
+#include <esp_netif.h>
 #include <esp_random.h>
 #include <esp_vfs_fat.h>
+#include <esp_wifi.h>
 #include <ff.h>
+#include <nvs_flash.h>
 #include <sdmmc_cmd.h>
 #include <minimp3.h>
 
@@ -57,6 +62,15 @@ Adafruit_TCA8418 keyboard;
 sdmmc_card_t* sd_card = nullptr;
 bool spi_ready = false;
 bool sd_ready = false;
+httpd_handle_t connection_httpd = nullptr;
+esp_netif_t* connection_ap_netif = nullptr;
+bool connection_stack_ready = false;
+bool connection_wifi_on = false;
+bool connection_http_on = false;
+volatile bool connection_dirty = false;
+int connection_req_count = 0;
+char connection_last_endpoint[32] = "-";
+char connection_last_error[64] = "none";
 
 LGFX_Sprite canvas(&M5.Display);
 
@@ -2704,12 +2718,210 @@ void drawSettings()
     canvas.pushSprite(0, 0);
 }
 
+void setConnectionStatus(const char* endpoint, const char* err)
+{
+    if (endpoint && endpoint[0]) snprintf(connection_last_endpoint, sizeof(connection_last_endpoint), "%s", endpoint);
+    if (err && err[0]) snprintf(connection_last_error, sizeof(connection_last_error), "%s", err);
+    connection_dirty = true;
+    dirty = true;
+}
+
+esp_err_t connectionRootHandler(httpd_req_t* req)
+{
+    ++connection_req_count;
+    setConnectionStatus("/", "none");
+    httpd_resp_set_type(req, "text/html");
+    const char* body =
+        "<!doctype html><html><body>"
+        "<h1>ABVx Connections</h1>"
+        "<p>Wi-Fi AP ping MVP.</p>"
+        "<ul>"
+        "<li><a href=\"/api/ping\">/api/ping</a></li>"
+        "<li><a href=\"/api/status\">/api/status</a></li>"
+        "</ul>"
+        "<p>File transfer later.</p>"
+        "</body></html>";
+    return httpd_resp_sendstr(req, body);
+}
+
+esp_err_t connectionPingHandler(httpd_req_t* req)
+{
+    ++connection_req_count;
+    setConnectionStatus("/api/ping", "none");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "OK PING\n");
+}
+
+esp_err_t connectionStatusHandler(httpd_req_t* req)
+{
+    ++connection_req_count;
+    setConnectionStatus("/api/status", "none");
+    char body[192];
+    snprintf(body, sizeof(body),
+             "OK STATUS\nap=%s\nhttp=%s\nreq=%d\nlast=%s\nerr=%s\n",
+             connection_wifi_on ? "ON" : "OFF",
+             connection_http_on ? "ON" : "OFF",
+             connection_req_count,
+             connection_last_endpoint,
+             connection_last_error);
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, body);
+}
+
+bool ensureConnectionStack(char* err, size_t err_len)
+{
+    if (connection_stack_ready) return true;
+
+    esp_err_t rc = nvs_flash_init();
+    if (rc == ESP_ERR_NVS_NO_FREE_PAGES || rc == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        rc = nvs_flash_init();
+    }
+    if (rc != ESP_OK) {
+        snprintf(err, err_len, "nvs %s", esp_err_to_name(rc));
+        return false;
+    }
+
+    rc = esp_netif_init();
+    if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+        snprintf(err, err_len, "netif %s", esp_err_to_name(rc));
+        return false;
+    }
+    rc = esp_event_loop_create_default();
+    if (rc != ESP_OK && rc != ESP_ERR_INVALID_STATE) {
+        snprintf(err, err_len, "event %s", esp_err_to_name(rc));
+        return false;
+    }
+
+    connection_ap_netif = esp_netif_create_default_wifi_ap();
+    if (!connection_ap_netif) {
+        snprintf(err, err_len, "ap netif");
+        return false;
+    }
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    rc = esp_wifi_init(&cfg);
+    if (rc != ESP_OK) {
+        snprintf(err, err_len, "wifi init %s", esp_err_to_name(rc));
+        return false;
+    }
+    connection_stack_ready = true;
+    return true;
+}
+
+bool startConnectionHttp(char* err, size_t err_len)
+{
+    if (connection_httpd) return true;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = 80;
+    config.lru_purge_enable = true;
+    esp_err_t rc = httpd_start(&connection_httpd, &config);
+    if (rc != ESP_OK) {
+        snprintf(err, err_len, "http %s", esp_err_to_name(rc));
+        connection_httpd = nullptr;
+        return false;
+    }
+
+    httpd_uri_t root = {};
+    root.uri = "/";
+    root.method = HTTP_GET;
+    root.handler = connectionRootHandler;
+    httpd_register_uri_handler(connection_httpd, &root);
+
+    httpd_uri_t ping = {};
+    ping.uri = "/api/ping";
+    ping.method = HTTP_GET;
+    ping.handler = connectionPingHandler;
+    httpd_register_uri_handler(connection_httpd, &ping);
+
+    httpd_uri_t status = {};
+    status.uri = "/api/status";
+    status.method = HTTP_GET;
+    status.handler = connectionStatusHandler;
+    httpd_register_uri_handler(connection_httpd, &status);
+
+    connection_http_on = true;
+    return true;
+}
+
+bool startConnections(char* err, size_t err_len)
+{
+    if (connection_wifi_on && connection_http_on) return true;
+    if (!ensureConnectionStack(err, err_len)) return false;
+
+    wifi_config_t ap_config = {};
+    const char* ssid = "ABVX-Cardputer";
+    const char* pass = "cardputer";
+    snprintf(reinterpret_cast<char*>(ap_config.ap.ssid), sizeof(ap_config.ap.ssid), "%s", ssid);
+    snprintf(reinterpret_cast<char*>(ap_config.ap.password), sizeof(ap_config.ap.password), "%s", pass);
+    ap_config.ap.ssid_len = std::strlen(ssid);
+    ap_config.ap.channel = 1;
+    ap_config.ap.max_connection = 2;
+    ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+
+    esp_err_t rc = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (rc != ESP_OK) {
+        snprintf(err, err_len, "mode %s", esp_err_to_name(rc));
+        return false;
+    }
+    rc = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+    if (rc != ESP_OK) {
+        snprintf(err, err_len, "config %s", esp_err_to_name(rc));
+        return false;
+    }
+    rc = esp_wifi_start();
+    if (rc != ESP_OK) {
+        snprintf(err, err_len, "start %s", esp_err_to_name(rc));
+        return false;
+    }
+    connection_wifi_on = true;
+    if (!startConnectionHttp(err, err_len)) return false;
+    setConnectionStatus("started", "none");
+    return true;
+}
+
+void stopConnections()
+{
+    if (connection_httpd) {
+        httpd_stop(connection_httpd);
+        connection_httpd = nullptr;
+    }
+    connection_http_on = false;
+    if (connection_wifi_on) {
+        esp_wifi_stop();
+    }
+    connection_wifi_on = false;
+    setConnectionStatus("stopped", "none");
+}
+
 void drawConnections()
 {
     canvas.fillScreen(uiBg());
     canvas.setTextSize(2);
     canvas.setTextColor(uiFg(), uiBg());
     canvas.setCursor(8, 8);
+    if (connection_wifi_on || connection_http_on) {
+        canvas.print("WIFI TRANSFER");
+        canvas.setTextSize(1);
+        canvas.setTextColor(uiFg(), uiBg());
+        canvas.setCursor(8, 34);
+        canvas.printf("SSID: ABVX-Cardputer");
+        canvas.setCursor(8, 46);
+        canvas.printf("PASS: cardputer");
+        canvas.setCursor(8, 58);
+        canvas.printf("URL:  http://192.168.4.1");
+        canvas.setCursor(8, 74);
+        canvas.printf("AP:%s HTTP:%s REQ:%d", connection_wifi_on ? "ON" : "OFF", connection_http_on ? "ON" : "OFF", connection_req_count);
+        canvas.setCursor(8, 86);
+        canvas.printf("LAST: %.22s", connection_last_endpoint);
+        canvas.setCursor(8, 98);
+        canvas.printf("ERR: %.24s", connection_last_error);
+        canvas.setTextColor(uiDim(), uiBg());
+        canvas.setCursor(8, 122);
+        canvas.print("PING/STATUS ONLY       GO STOP");
+        canvas.pushSprite(0, 0);
+        return;
+    }
     canvas.print("CONNECTIONS");
     canvas.setCursor(8, 38);
     canvas.print("> WiFi Transfer");
@@ -2720,9 +2932,9 @@ void drawConnections()
     canvas.setTextSize(1);
     canvas.setTextColor(uiDim(), uiBg());
     canvas.setCursor(8, 112);
-    canvas.print("AP HTTP file manager later");
+    canvas.print("AP ping/status MVP");
     canvas.setCursor(8, 122);
-    canvas.print("OK INFO          GO BACK");
+    canvas.print("OK START         GO BACK");
     canvas.pushSprite(0, 0);
 }
 
@@ -3337,13 +3549,15 @@ void handleKey(KeyEvent ev)
 
     if (screen == Screen::Connections) {
         if (ev.key == Key::Ok) {
-            message_title = "WiFi Transfer";
-            message_body = "AP HTTP later";
-            message_returns_music = false;
-            message_returns_notes = false;
-            screen = Screen::Message;
-            blockInput(250);
+            if (!connection_wifi_on || !connection_http_on) {
+                char err[64] = {};
+                if (!startConnections(err, sizeof(err))) {
+                    setConnectionStatus("start", err[0] ? err : "failed");
+                }
+            }
+            blockInput(400);
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            if (connection_wifi_on || connection_http_on) stopConnections();
             screen = Screen::Launcher;
             blockInput(250);
         }
@@ -3388,6 +3602,10 @@ extern "C" void app_main(void)
         M5.update();
         KeyEvent ev = pollKey();
         handleKey(ev);
+        if (connection_dirty) {
+            connection_dirty = false;
+            dirty = true;
+        }
         drawIfDirty();
         updateAudio();
         updateRecording();
