@@ -1385,58 +1385,109 @@ bool containsCyrillic(const std::string& text)
     return false;
 }
 
-std::string cyrillicToTranslit(const std::string& text)
+void drawSegmentGlyph(int x, int y, int scale, const char* segs, uint16_t color)
 {
-    std::string out;
-    for (size_t i = 0; i < text.size();) {
-        uint32_t cp = nextUtf8Codepoint(text, i);
-        switch (cp) {
-            case 0x0410: case 0x0430: out += "a"; break;
-            case 0x0411: case 0x0431: out += "b"; break;
-            case 0x0412: case 0x0432: out += "v"; break;
-            case 0x0413: case 0x0433: out += "g"; break;
-            case 0x0414: case 0x0434: out += "d"; break;
-            case 0x0415: case 0x0435: out += "e"; break;
-            case 0x0401: case 0x0451: out += "yo"; break;
-            case 0x0416: case 0x0436: out += "zh"; break;
-            case 0x0417: case 0x0437: out += "z"; break;
-            case 0x0418: case 0x0438: out += "i"; break;
-            case 0x0419: case 0x0439: out += "j"; break;
-            case 0x041A: case 0x043A: out += "k"; break;
-            case 0x041B: case 0x043B: out += "l"; break;
-            case 0x041C: case 0x043C: out += "m"; break;
-            case 0x041D: case 0x043D: out += "n"; break;
-            case 0x041E: case 0x043E: out += "o"; break;
-            case 0x041F: case 0x043F: out += "p"; break;
-            case 0x0420: case 0x0440: out += "r"; break;
-            case 0x0421: case 0x0441: out += "s"; break;
-            case 0x0422: case 0x0442: out += "t"; break;
-            case 0x0423: case 0x0443: out += "u"; break;
-            case 0x0424: case 0x0444: out += "f"; break;
-            case 0x0425: case 0x0445: out += "h"; break;
-            case 0x0426: case 0x0446: out += "ts"; break;
-            case 0x0427: case 0x0447: out += "ch"; break;
-            case 0x0428: case 0x0448: out += "sh"; break;
-            case 0x0429: case 0x0449: out += "shch"; break;
-            case 0x042A: case 0x044A: out += ""; break;
-            case 0x042B: case 0x044B: out += "y"; break;
-            case 0x042C: case 0x044C: out += ""; break;
-            case 0x042D: case 0x044D: out += "e"; break;
-            case 0x042E: case 0x044E: out += "yu"; break;
-            case 0x042F: case 0x044F: out += "ya"; break;
-            default:
-                if (cp < 128) out.push_back(static_cast<char>(cp));
-                else out += "?";
-                break;
+    const int t = std::max(1, scale);
+    auto line = [&](int x1, int y1, int x2, int y2) {
+        canvas.drawLine(x + x1 * scale, y + y1 * scale, x + x2 * scale, y + y2 * scale, color);
+        if (t > 1) canvas.drawLine(x + x1 * scale, y + y1 * scale + 1, x + x2 * scale, y + y2 * scale + 1, color);
+    };
+    for (const char* p = segs; *p; ++p) {
+        switch (*p) {
+            case 'A': line(0, 0, 4, 0); break;
+            case 'B': line(0, 3, 4, 3); break;
+            case 'C': line(0, 7, 4, 7); break;
+            case 'D': line(0, 0, 0, 3); break;
+            case 'E': line(4, 0, 4, 3); break;
+            case 'F': line(0, 3, 0, 7); break;
+            case 'G': line(4, 3, 4, 7); break;
+            case 'H': line(0, 0, 4, 7); break;
+            case 'I': line(4, 0, 0, 7); break;
+            case 'J': line(2, 0, 2, 7); break;
+            case 'K': line(0, 3, 4, 0); break;
+            case 'L': line(0, 3, 4, 7); break;
         }
     }
-    return out;
 }
 
+const char* cyrillicSegments(uint32_t cp)
+{
+    switch (cp) {
+        case 0x0410: case 0x0430: return "ABDFEG";       // А
+        case 0x0411: case 0x0431: return "ADFBCG";        // Б
+        case 0x0412: case 0x0432: return "ADFBEGCG";      // В
+        case 0x0413: case 0x0433: return "ADF";           // Г
+        case 0x0414: case 0x0434: return "ADEFGLC";       // Д approx
+        case 0x0415: case 0x0435: return "ADFBC";         // Е
+        case 0x0401: case 0x0451: return "ADFBC";         // Ё approx
+        case 0x0416: case 0x0436: return "HIDJEGF";       // Ж
+        case 0x0417: case 0x0437: return "ABEGC";         // З
+        case 0x0418: case 0x0438: return "DFGEH";         // И
+        case 0x0419: case 0x0439: return "DFGEH";         // Й approx
+        case 0x041A: case 0x043A: return "DFKL";          // К
+        case 0x041B: case 0x043B: return "ADEF";          // Л approx
+        case 0x041C: case 0x043C: return "DFGEHI";        // М
+        case 0x041D: case 0x043D: return "DFBEG";         // Н
+        case 0x041E: case 0x043E: return "ADFEGC";        // О
+        case 0x041F: case 0x043F: return "ADFEG";         // П
+        case 0x0420: case 0x0440: return "ADFBE";         // Р
+        case 0x0421: case 0x0441: return "ADFC";          // С
+        case 0x0422: case 0x0442: return "AJ";            // Т
+        case 0x0423: case 0x0443: return "DEBCG";         // У approx
+        case 0x0424: case 0x0444: return "ABCFDGJ";       // Ф approx
+        case 0x0425: case 0x0445: return "HI";            // Х
+        case 0x0426: case 0x0446: return "DFGC";          // Ц approx
+        case 0x0427: case 0x0447: return "EGB";           // Ч
+        case 0x0428: case 0x0448: return "DFGCJ";         // Ш
+        case 0x0429: case 0x0449: return "DFGCJL";        // Щ approx
+        case 0x042A: case 0x044A: return "DFBCG";         // Ъ approx
+        case 0x042B: case 0x044B: return "DFBCGJ";        // Ы approx
+        case 0x042C: case 0x044C: return "DFBCG";         // Ь
+        case 0x042D: case 0x044D: return "ABEGC";         // Э approx
+        case 0x042E: case 0x044E: return "DFBEGC";        // Ю approx
+        case 0x042F: case 0x044F: return "ABEGL";         // Я approx
+        // Ukrainian extras
+        case 0x0406: case 0x0456: return "J";             // І
+        case 0x0407: case 0x0457: return "J";             // Ї approx
+        case 0x0404: case 0x0454: return "ADFC";          // Є approx
+        case 0x0490: case 0x0491: return "ADF";           // Ґ approx
+        default: return nullptr;
+    }
+}
+
+void drawMixedTextLine(int x, int y, const std::string& text, int scale = 2)
+{
+    int cx = x;
+    canvas.setTextSize(scale);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    for (size_t i = 0; i < text.size();) {
+        size_t before = i;
+        uint32_t cp = nextUtf8Codepoint(text, i);
+        if (cp == ' ') {
+            cx += 6 * scale;
+            continue;
+        }
+        const char* seg = cyrillicSegments(cp);
+        if (seg) {
+            drawSegmentGlyph(cx, y + 1, scale, seg, TFT_WHITE);
+            cx += 6 * scale;
+        } else if (cp < 128) {
+            char b[2] = {static_cast<char>(cp), 0};
+            canvas.setCursor(cx, y);
+            canvas.print(b);
+            cx += 6 * scale;
+        } else {
+            canvas.drawRect(cx, y + 2, 4 * scale, 7 * scale, TFT_WHITE);
+            cx += 6 * scale;
+        }
+        if (i == before) ++i;
+        if (cx > SCREEN_W - 8) break;
+    }
+}
 void drawTextLineSmart(int x, int y, const std::string& text)
 {
     if (containsCyrillic(text)) {
-        canvas.print(cyrillicToTranslit(text).c_str());
+        drawMixedTextLine(x, y, text, 2);
     } else {
         canvas.print(text.c_str());
     }
@@ -1664,11 +1715,16 @@ void drawReaderSpeed()
     canvas.print(speed_paused ? "PAUSE" : "RUN");
 
     std::string text = currentSpeedText();
-    if (containsCyrillic(text)) text = cyrillicToTranslit(text);
+    bool cyr = containsCyrillic(text);
     int cols = utf8Columns(text);
     int size = cols <= 10 ? 3 : 2;
     if (text.size() > 48) text = text.substr(0, 48);
-    drawCenteredText(text, size == 3 ? 62 : 66, size, speed_paused ? TFT_DARKGREY : TFT_WHITE);
+    if (cyr) {
+        int width = cols * 6 * size;
+        drawMixedTextLine(std::max(0, (SCREEN_W - width) / 2), size == 3 ? 62 : 66, text, size);
+    } else {
+        drawCenteredText(text, size == 3 ? 62 : 66, size, speed_paused ? TFT_DARKGREY : TFT_WHITE);
+    }
 
     canvas.setTextSize(1);
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);

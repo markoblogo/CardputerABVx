@@ -131,7 +131,7 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 
 ## Known limitations
 
-- Reader/Notes text support is MVP only: English/Russian best-effort, in-RAM Reader bookmarks only, no persistent saved position, Cyrillic viewer fallback transliterates unsupported glyphs, no French/Ukrainian font support yet.
+- Reader/Notes text support is MVP only: English/Russian best-effort, in-RAM Reader bookmarks only, no persistent saved position, Reader/Notes include a compact Cyrillic bitmap fallback for Russian/Ukrainian text; French accents are not supported yet.
 - Notes input supports latin text plus RU transliteration save mode; the edit screen shows latin translit because the current large font does not render Cyrillic. Punctuation is still limited by Cardputer arrow-key mappings.
 - Recordings use `/sdcard/rec` instead of `/sdcard/recordings` because FATFS long filenames are not enabled yet.
 - Music playback is chunk/blocking-based; controls may have small latency.
