@@ -39,6 +39,11 @@ Confirmed on real Cardputer ADV:
 - Randomizer app:
   - rolls `YES`, `NO`, or `MB` using `esp_random()`;
   - does not store history yet.
+- Habits app:
+  - stores routine definitions in `/sdcard/habits/HABITS.TXT`;
+  - stores daily checks in `/sdcard/habits/LOG.TXT`;
+  - shows a `TODAY` checklist;
+  - `1` starts the next internal day and clears today's checks.
 - Time app:
   - includes Clock, Stopwatch, Timer, and Alarm modes;
   - Left / Right switches mode;
@@ -156,6 +161,16 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 3. Confirm result changes between `YES`, `NO`, and `MB`.
 4. Press `GO` to return to launcher.
 
+### Habits
+
+1. Open Habits.
+2. Confirm default checklist appears: `Take pills`, `Walk`, `Read`.
+3. Use Up / Down to select a habit.
+4. Press `OK` to check/uncheck.
+5. Leave and reopen Habits; today's checks should remain.
+6. Press `1` to start a new internal day; checks should clear.
+7. Press `GO` to return to launcher.
+
 ### Record
 
 1. Open Record.
@@ -175,6 +190,7 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 - Music playback is chunk/blocking-based; controls may have small latency.
 - Files MVP is read/open only; delete and rename are postponed.
 - Future Transfer/Connections app should provide Wi-Fi AP + HTTP file manager for moving arbitrary files to/from SD without removing the card.
+- Habits MVP has manual day rollover with `1 NEW DAY`; real calendar dates and weekly/monthly/yearly summaries are postponed until time sync/storage polish.
 - Time block is implemented for this stage: manual runtime clock, stopwatch, timer, and alarm. Full power-off resets time; future Mac sync should set time once during sync.
 - Screen-off playback/power optimization is not finalized yet.
 - Dev diagnostics were removed from the normal build after proving MP3 decode/speaker path.

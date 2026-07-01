@@ -35,6 +35,10 @@ constexpr const char* MUSIC_DIR = "/sdcard/music";
 constexpr const char* BOOKS_DIR = "/sdcard/books";
 constexpr const char* NOTES_DIR = "/sdcard/notes";
 constexpr const char* RECORDINGS_DIR = "/sdcard/rec";
+constexpr const char* HABITS_DIR = "/sdcard/habits";
+constexpr const char* HABITS_FILE = "/sdcard/habits/HABITS.TXT";
+constexpr const char* HABIT_LOG_FILE = "/sdcard/habits/LOG.TXT";
+constexpr const char* HABIT_STATE_FILE = "/sdcard/habits/STATE.TXT";
 constexpr int SCREEN_W = 240;
 constexpr int SCREEN_H = 135;
 constexpr int INPUT_BUF_SIZE = 8 * 1024;
@@ -54,7 +58,7 @@ bool sd_ready = false;
 
 LGFX_Sprite canvas(&M5.Display);
 
-enum class Screen { Launcher, MusicList, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, RecorderList, RecorderRecording, RecorderPlaying, TimeApp, FilesList, Randomizer, Message };
+enum class Screen { Launcher, MusicList, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, RecorderList, RecorderRecording, RecorderPlaying, TimeApp, FilesList, Randomizer, HabitsList, Message };
 enum class Key { None, Up, Down, Left, Right, Ok, Back, Home, One, Backspace };
 enum class VolumeMode { Mute = 0, Mid = 1, Loud = 2 };
 enum class SpeedMode { OneWord = 0, TwoWords = 1, Line = 2 };
@@ -71,6 +75,13 @@ struct FileEntry {
     std::string path;
     bool is_dir = false;
     size_t size = 0;
+};
+
+struct Habit {
+    std::string id;
+    std::string title;
+    bool active = true;
+    bool done = false;
 };
 
 struct RawKey {
@@ -122,8 +133,11 @@ std::vector<std::string> books;
 std::vector<std::string> notes;
 std::vector<std::string> recordings;
 std::vector<FileEntry> file_entries;
+std::vector<Habit> habits;
 std::string files_path = MOUNT_POINT;
 int files_cursor = 0;
+int habits_cursor = 0;
+int habit_day = 1;
 int selected_track = 0;
 std::string override_music_path;
 int selected_book = 0;
@@ -591,6 +605,146 @@ std::string nextNoteName()
         }
     }
     return "NOTE9999.TXT";
+}
+
+std::string habitDayId()
+{
+    char buf[12];
+    snprintf(buf, sizeof(buf), "DAY%04d", habit_day);
+    return buf;
+}
+
+bool ensureHabitsDir(std::string* err = nullptr)
+{
+    if (!initSd()) {
+        if (err) *err = "sd mount";
+        return false;
+    }
+    errno = 0;
+    if (mkdir(HABITS_DIR, 0775) != 0 && errno != EEXIST) {
+        if (err) {
+            *err = "mkdir ";
+            *err += std::to_string(errno);
+            *err += " ";
+            *err += std::strerror(errno);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ensureDefaultHabits(std::string* err = nullptr)
+{
+    if (!ensureHabitsDir(err)) return false;
+    struct stat st = {};
+    if (stat(HABITS_FILE, &st) == 0) return true;
+    FILE* f = fopen(HABITS_FILE, "wb");
+    if (!f) {
+        if (err) {
+            *err = "open ";
+            *err += std::strerror(errno);
+        }
+        return false;
+    }
+    fputs("MEDS|Take pills|1\n", f);
+    fputs("WALK|Walk|1\n", f);
+    fputs("READ|Read|1\n", f);
+    fclose(f);
+    return true;
+}
+
+void loadHabitState()
+{
+    if (!ensureHabitsDir()) return;
+    FILE* f = fopen(HABIT_STATE_FILE, "rb");
+    if (!f) return;
+    int day = 0;
+    if (fscanf(f, "%d", &day) == 1 && day >= 1 && day <= 9999) habit_day = day;
+    fclose(f);
+}
+
+void saveHabitState()
+{
+    if (!ensureHabitsDir()) return;
+    FILE* f = fopen(HABIT_STATE_FILE, "wb");
+    if (!f) return;
+    fprintf(f, "%d\n", habit_day);
+    fclose(f);
+}
+
+void loadHabitLogForDay()
+{
+    std::string day = habitDayId();
+    FILE* f = fopen(HABIT_LOG_FILE, "rb");
+    if (!f) return;
+    char line[160];
+    while (fgets(line, sizeof(line), f)) {
+        std::string s = line;
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+        size_t p1 = s.find('|');
+        size_t p2 = p1 == std::string::npos ? std::string::npos : s.find('|', p1 + 1);
+        if (p1 == std::string::npos || p2 == std::string::npos) continue;
+        if (s.substr(0, p1) != day) continue;
+        std::string id = s.substr(p1 + 1, p2 - p1 - 1);
+        bool done = s.substr(p2 + 1) == "1";
+        for (auto& h : habits) {
+            if (h.id == id) h.done = done;
+        }
+    }
+    fclose(f);
+}
+
+void saveHabitLogForDay()
+{
+    if (!ensureHabitsDir()) return;
+    std::string day = habitDayId();
+    std::vector<std::string> old_lines;
+    FILE* in = fopen(HABIT_LOG_FILE, "rb");
+    if (in) {
+        char line[160];
+        while (fgets(line, sizeof(line), in)) {
+            std::string s = line;
+            size_t p = s.find('|');
+            if (p != std::string::npos && s.substr(0, p) == day) continue;
+            old_lines.push_back(s);
+        }
+        fclose(in);
+    }
+    FILE* out = fopen(HABIT_LOG_FILE, "wb");
+    if (!out) return;
+    for (const auto& s : old_lines) fputs(s.c_str(), out);
+    for (const auto& h : habits) {
+        if (!h.active) continue;
+        fprintf(out, "%s|%s|%d\n", day.c_str(), h.id.c_str(), h.done ? 1 : 0);
+    }
+    fclose(out);
+}
+
+void scanHabits()
+{
+    habits.clear();
+    std::string err;
+    if (!ensureDefaultHabits(&err)) return;
+    loadHabitState();
+    FILE* f = fopen(HABITS_FILE, "rb");
+    if (!f) return;
+    char line[160];
+    while (fgets(line, sizeof(line), f)) {
+        std::string s = line;
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+        size_t p1 = s.find('|');
+        size_t p2 = p1 == std::string::npos ? std::string::npos : s.find('|', p1 + 1);
+        if (p1 == std::string::npos || p2 == std::string::npos) continue;
+        Habit h;
+        h.id = s.substr(0, p1);
+        h.title = s.substr(p1 + 1, p2 - p1 - 1);
+        h.active = s.substr(p2 + 1) != "0";
+        h.done = false;
+        if (h.active && !h.id.empty() && !h.title.empty()) habits.push_back(h);
+    }
+    fclose(f);
+    loadHabitLogForDay();
+    habits_cursor = std::max(0, std::min(habits_cursor, std::max(0, static_cast<int>(habits.size()) - 1)));
 }
 
 size_t utf8CharLen(unsigned char c)
@@ -1398,7 +1552,7 @@ bool sdUsage(uint64_t* total, uint64_t* free_bytes)
 
 void drawLauncher()
 {
-    static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] FILES", "[?] RANDOM"};
+    static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] FILES", "[?] RANDOM", "[x] HABITS"};
     constexpr int launcher_count = sizeof(labels) / sizeof(labels[0]);
     canvas.fillScreen(TFT_BLACK);
     canvas.setTextSize(2);
@@ -1436,6 +1590,41 @@ void drawRandomizer()
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
     canvas.setCursor(8, 122);
     canvas.print("OK ROLL   GO BACK");
+    canvas.pushSprite(0, 0);
+}
+
+void drawHabitsList()
+{
+    canvas.fillScreen(TFT_BLACK);
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas.setCursor(8, 8);
+    canvas.print("HABITS TODAY");
+    if (habits.empty()) {
+        canvas.setCursor(8, 48);
+        canvas.print("NO HABITS");
+        canvas.setTextSize(1);
+        canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+        canvas.setCursor(8, 78);
+        canvas.print("/sdcard/habits");
+    } else {
+        int rows = 4;
+        int start = std::max(0, habits_cursor - 1);
+        start = std::min(start, std::max(0, static_cast<int>(habits.size()) - rows));
+        int end = std::min(static_cast<int>(habits.size()), start + rows);
+        for (int i = start; i < end; ++i) {
+            const auto& h = habits[i];
+            canvas.setCursor(8, 34 + (i - start) * 21);
+            canvas.setTextColor(i == habits_cursor ? TFT_BLACK : TFT_WHITE, i == habits_cursor ? TFT_WHITE : TFT_BLACK);
+            canvas.printf("%c[%c] %.10s", i == habits_cursor ? '>' : ' ', h.done ? 'x' : ' ', h.title.c_str());
+        }
+    }
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.setCursor(8, 112);
+    canvas.print("1 NEW DAY  LOG SAVED");
+    canvas.setCursor(8, 122);
+    canvas.print("OK CHECK        GO BACK");
     canvas.pushSprite(0, 0);
 }
 
@@ -2177,6 +2366,7 @@ void drawIfDirty()
     else if (screen == Screen::TimeApp) drawTimeApp();
     else if (screen == Screen::FilesList) drawFilesList();
     else if (screen == Screen::Randomizer) drawRandomizer();
+    else if (screen == Screen::HabitsList) drawHabitsList();
     else drawMessage();
     dirty = false;
 }
@@ -2238,7 +2428,7 @@ void handleKey(KeyEvent ev)
 
     if (screen == Screen::Launcher) {
         if (ev.key == Key::Up) launcher_index = std::max(0, launcher_index - 1);
-        else if (ev.key == Key::Down) launcher_index = std::min(6, launcher_index + 1);
+        else if (ev.key == Key::Down) launcher_index = std::min(7, launcher_index + 1);
         else if (ev.key == Key::Home) { launcher_index = 0; scanMusic(); screen = Screen::MusicList; }
         else if (ev.key == Key::Ok) {
             if (launcher_index == 0) { scanMusic(); screen = Screen::MusicList; }
@@ -2248,6 +2438,7 @@ void handleKey(KeyEvent ev)
             else if (launcher_index == 4) { time_mode = TimeMode::Clock; clock_base_ms = M5.millis(); screen = Screen::TimeApp; blockInput(250); }
             else if (launcher_index == 5) { scanFiles(MOUNT_POINT); screen = Screen::FilesList; blockInput(250); }
             else if (launcher_index == 6) { random_result = "READY"; screen = Screen::Randomizer; blockInput(250); }
+            else if (launcher_index == 7) { scanHabits(); screen = Screen::HabitsList; blockInput(250); }
             else { message_title = "Coming soon"; message_body = "Music/Reader/Record"; message_returns_music = false; screen = Screen::Message; }
         }
         dirty = true;
@@ -2600,6 +2791,29 @@ void handleKey(KeyEvent ev)
             random_result = results[esp_random() % 3];
             blockInput(220);
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            screen = Screen::Launcher;
+            blockInput(250);
+        }
+        dirty = true;
+        return;
+    }
+
+    if (screen == Screen::HabitsList) {
+        if (ev.key == Key::Up && !habits.empty()) habits_cursor = std::max(0, habits_cursor - 1);
+        else if (ev.key == Key::Down && !habits.empty()) habits_cursor = std::min(static_cast<int>(habits.size()) - 1, habits_cursor + 1);
+        else if (ev.key == Key::Ok && !habits.empty()) {
+            habits[habits_cursor].done = !habits[habits_cursor].done;
+            saveHabitLogForDay();
+            blockInput(220);
+        } else if (ev.key == Key::One) {
+            saveHabitLogForDay();
+            habit_day = std::min(9999, habit_day + 1);
+            for (auto& h : habits) h.done = false;
+            saveHabitState();
+            saveHabitLogForDay();
+            blockInput(300);
+        } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            saveHabitLogForDay();
             screen = Screen::Launcher;
             blockInput(250);
         }
