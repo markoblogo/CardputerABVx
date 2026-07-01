@@ -2612,14 +2612,17 @@ void drawSettings()
     canvas.setTextColor(uiFg(), uiBg());
     canvas.setCursor(8, 8);
     canvas.print("SETTINGS");
-    static const char* labels[] = {"THEME", "SOUND", "TIMEOUT", "POWER", "SD", "COMM"};
-    for (int i = 0; i < 4; ++i) {
-        canvas.setCursor(8, 34 + i * 21);
+    int start = std::max(0, settings_cursor - 1);
+    start = std::min(start, 3);
+    for (int i = start; i < std::min(6, start + 3); ++i) {
+        canvas.setCursor(8, 34 + (i - start) * 23);
         canvas.setTextColor(i == settings_cursor ? uiBg() : uiFg(), i == settings_cursor ? uiFg() : uiBg());
         if (i == 0) canvas.printf("%c THEME %s", i == settings_cursor ? '>' : ' ', themeName());
         else if (i == 1) canvas.printf("%c SOUND later", i == settings_cursor ? '>' : ' ');
         else if (i == 2) canvas.printf("%c TIMEOUT later", i == settings_cursor ? '>' : ' ');
-        else canvas.printf("%c POWER later", i == settings_cursor ? '>' : ' ');
+        else if (i == 3) canvas.printf("%c POWER later", i == settings_cursor ? '>' : ' ');
+        else if (i == 4) canvas.printf("%c SD status", i == settings_cursor ? '>' : ' ');
+        else canvas.printf("%c COMM later", i == settings_cursor ? '>' : ' ');
     }
     canvas.setTextSize(1);
     canvas.setTextColor(uiDim(), uiBg());
@@ -2635,7 +2638,6 @@ void drawSettings()
     canvas.setCursor(8, 122);
     canvas.print("L/R CHANGE       GO BACK");
     canvas.pushSprite(0, 0);
-    (void)labels;
 }
 
 void drawMessage()
