@@ -9,7 +9,7 @@ Current focus: MP3-first offline shell with Music, Record, Reader, and Notes MVP
 Confirmed on real Cardputer ADV:
 
 - ABVx boot splash.
-- Large monochrome launcher UI.
+- Large monochrome launcher UI with battery percentage widget.
 - Music app:
   - scans `/sdcard/music` for `.MP3` / `.mp3` files;
   - plays MP3 files from SD;
@@ -33,6 +33,7 @@ Confirmed on real Cardputer ADV:
   - opens saved notes using the same readable text viewer.
 - Files app:
   - browses SD folders and known file types;
+  - shows SD free/used storage status;
   - opens `.MP3`, `.TXT`, and `.WAV` files through existing Music/Reader/Notes/Record paths;
   - delete/rename are intentionally not implemented yet.
 - Time app:
@@ -163,6 +164,7 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 - Recordings use `/sdcard/rec` instead of `/sdcard/recordings` because FATFS long filenames are not enabled yet.
 - Music playback is chunk/blocking-based; controls may have small latency.
 - Files MVP is read/open only; delete and rename are postponed.
+- Future Transfer/Connections app should provide Wi-Fi AP + HTTP file manager for moving arbitrary files to/from SD without removing the card.
 - Time block is implemented for this stage: manual runtime clock, stopwatch, timer, and alarm. Full power-off resets time; future Mac sync should set time once during sync.
 - Screen-off playback/power optimization is not finalized yet.
 - Dev diagnostics were removed from the normal build after proving MP3 decode/speaker path.

@@ -17,6 +17,7 @@
 #include <driver/spi_master.h>
 #include <esp_random.h>
 #include <esp_vfs_fat.h>
+#include <ff.h>
 #include <sdmmc_cmd.h>
 #include <minimp3.h>
 
@@ -1339,6 +1340,61 @@ void updateRecordingPlayback()
     M5.Speaker.playRaw(rec_buffer.data(), n, REC_SAMPLE_RATE, false, 1, -1, true);
 }
 
+
+int batteryPercent()
+{
+    int level = M5.Power.getBatteryLevel();
+    if (level < 0 || level > 100) return -1;
+    return level;
+}
+
+void drawBatteryWidget(int x, int y)
+{
+    int level = batteryPercent();
+    canvas.drawLine(x + 5, y, x, y + 8, TFT_WHITE);
+    canvas.drawLine(x, y + 8, x + 6, y + 8, TFT_WHITE);
+    canvas.drawLine(x + 6, y + 8, x + 2, y + 16, TFT_WHITE);
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.setCursor(x + 12, y + 4);
+    if (level >= 0) canvas.printf("%d%%", level);
+    else canvas.print("--%");
+}
+
+std::string formatBytes(uint64_t bytes)
+{
+    char buf[16];
+    if (bytes >= 1024ULL * 1024ULL * 1024ULL) {
+        snprintf(buf, sizeof(buf), "%.1fG", static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0));
+    } else if (bytes >= 1024ULL * 1024ULL) {
+        snprintf(buf, sizeof(buf), "%.0fM", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    } else if (bytes >= 1024ULL) {
+        snprintf(buf, sizeof(buf), "%.0fK", static_cast<double>(bytes) / 1024.0);
+    } else {
+        snprintf(buf, sizeof(buf), "%luB", static_cast<unsigned long>(bytes));
+    }
+    return buf;
+}
+
+bool sdUsage(uint64_t* total, uint64_t* free_bytes)
+{
+    if (!initSd()) return false;
+    FATFS* fs = nullptr;
+    DWORD free_clusters = 0;
+    FRESULT res = f_getfree("0:", &free_clusters, &fs);
+    if (res != FR_OK || fs == nullptr) {
+        res = f_getfree("", &free_clusters, &fs);
+    }
+    if (res != FR_OK || fs == nullptr) return false;
+    uint64_t sector_size = 512;
+#if FF_MAX_SS != FF_MIN_SS
+    sector_size = fs->ssize;
+#endif
+    *total = static_cast<uint64_t>(fs->n_fatent - 2) * fs->csize * sector_size;
+    *free_bytes = static_cast<uint64_t>(free_clusters) * fs->csize * sector_size;
+    return true;
+}
+
 void drawLauncher()
 {
     static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] FILES"};
@@ -1347,6 +1403,7 @@ void drawLauncher()
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
     canvas.setCursor(8, 8);
     canvas.println("ABVx");
+    drawBatteryWidget(176, 6);
     int start = std::max(0, launcher_index - 1);
     start = std::min(start, 3);
     for (int i = start; i < std::min(6, start + 3); ++i) {
@@ -1991,20 +2048,27 @@ void drawFilesList()
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
     canvas.setCursor(8, 30);
     canvas.printf("%.28s", files_path == MOUNT_POINT ? "/" : files_path.substr(std::strlen(MOUNT_POINT)).c_str());
+    uint64_t total = 0, free_b = 0;
+    canvas.setCursor(8, 40);
+    if (sdUsage(&total, &free_b) && total >= free_b) {
+        canvas.printf("SD %s FREE USED %s", formatBytes(free_b).c_str(), formatBytes(total - free_b).c_str());
+    } else {
+        canvas.print("SD -- FREE USED --");
+    }
     if (file_entries.empty()) {
         canvas.setTextSize(2);
         canvas.setTextColor(TFT_WHITE, TFT_BLACK);
-        canvas.setCursor(8, 54);
+        canvas.setCursor(8, 62);
         canvas.print(sd_ready ? "EMPTY" : "NO SD");
     } else {
-        int rows = 4;
+        int rows = 3;
         int start = std::max(0, files_cursor - 1);
         start = std::min(start, std::max(0, static_cast<int>(file_entries.size()) - rows));
         int end = std::min(static_cast<int>(file_entries.size()), start + rows);
         canvas.setTextSize(2);
         for (int i = start; i < end; ++i) {
             const auto& e = file_entries[i];
-            canvas.setCursor(8, 42 + (i - start) * 20);
+            canvas.setCursor(8, 58 + (i - start) * 20);
             canvas.setTextColor(i == files_cursor ? TFT_BLACK : TFT_WHITE, i == files_cursor ? TFT_WHITE : TFT_BLACK);
             canvas.printf("%c%c%.12s", i == files_cursor ? '>' : ' ', e.is_dir ? '/' : ' ', e.name.c_str());
         }
