@@ -49,8 +49,11 @@ Confirmed on real Cardputer ADV:
 - Settings app:
   - stores config in `/sdcard/cardputer/CONFIG.TXT`;
   - supports UI themes: `WHITE`, `GREEN`, `YELLOW`, `INVERT`;
+  - supports alert sound levels: `OFF`, `LOW`, `MID`, `LOUD`, `MAX`;
+  - supports screen timeout modes: `SHORT`, `NORMAL`, `LONG`;
+  - supports `POWER` preset: green theme, low sound, short timeout;
   - shows SD free/used status;
-  - keeps sound, timeout, power save, and communication settings as placeholders for the next passes.
+  - keeps communication settings as placeholders for the next passes.
 - Time app:
   - includes Clock, Stopwatch, Timer, and Alarm modes;
   - Left / Right switches mode;
@@ -189,8 +192,11 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 1. Open Settings.
 2. On `THEME`, press Left / Right / OK.
 3. Confirm UI changes between `WHITE`, `GREEN`, `YELLOW`, and `INVERT`.
-4. Confirm `CFG SAVED` or `CFG LOADED` appears when SD is available.
-5. Reboot and confirm the selected theme is loaded from `/sdcard/cardputer/CONFIG.TXT`.
+4. Change `SOUND` between `OFF`, `LOW`, `MID`, `LOUD`, and `MAX`.
+5. Change `TIMEOUT` between `SHORT`, `NORMAL`, and `LONG`.
+6. Toggle `POWER`; it should switch to green/low/short.
+7. Confirm `CFG SAVED` or `CFG LOADED` appears when SD is available.
+8. Reboot and confirm settings load from `/sdcard/cardputer/CONFIG.TXT`.
 
 ### Record
 

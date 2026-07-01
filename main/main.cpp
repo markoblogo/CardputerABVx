@@ -67,6 +67,8 @@ enum class SpeedMode { OneWord = 0, TwoWords = 1, Line = 2 };
 enum class TimeMode { Clock = 0, Stopwatch = 1, Timer = 2, Alarm = 3 };
 enum class TimeSetField { Hours = 0, Minutes = 1, Seconds = 2 };
 enum class ThemeMode { White = 0, Green = 1, Yellow = 2, Invert = 3 };
+enum class SoundMode { Off = 0, Low = 1, Mid = 2, Loud = 3, Max = 4 };
+enum class TimeoutMode { Short = 0, Normal = 1, Long = 2 };
 
 struct KeyEvent {
     Key key = Key::None;
@@ -146,6 +148,9 @@ int habits_manage_cursor = 0;
 std::string habit_input;
 int settings_cursor = 0;
 ThemeMode theme_mode = ThemeMode::White;
+SoundMode sound_mode = SoundMode::Mid;
+TimeoutMode timeout_mode = TimeoutMode::Normal;
+bool power_save = false;
 std::string config_status = "RAM";
 int selected_track = 0;
 std::string override_music_path;
@@ -245,12 +250,61 @@ const char* themeName()
     return "WHITE";
 }
 
+const char* soundName()
+{
+    if (sound_mode == SoundMode::Off) return "OFF";
+    if (sound_mode == SoundMode::Low) return "LOW";
+    if (sound_mode == SoundMode::Loud) return "LOUD";
+    if (sound_mode == SoundMode::Max) return "MAX";
+    return "MID";
+}
+
+const char* timeoutName()
+{
+    if (timeout_mode == TimeoutMode::Short) return "SHORT";
+    if (timeout_mode == TimeoutMode::Long) return "LONG";
+    return "NORMAL";
+}
+
+int soundVolume()
+{
+    if (sound_mode == SoundMode::Off) return 0;
+    if (sound_mode == SoundMode::Low) return 60;
+    if (sound_mode == SoundMode::Loud) return 200;
+    if (sound_mode == SoundMode::Max) return 255;
+    return 128;
+}
+
+void applyPowerSavePreset()
+{
+    if (!power_save) return;
+    theme_mode = ThemeMode::Green;
+    sound_mode = SoundMode::Low;
+    timeout_mode = TimeoutMode::Short;
+}
+
 void setThemeByName(const std::string& value)
 {
     if (value == "GREEN") theme_mode = ThemeMode::Green;
     else if (value == "YELLOW") theme_mode = ThemeMode::Yellow;
     else if (value == "INVERT") theme_mode = ThemeMode::Invert;
     else theme_mode = ThemeMode::White;
+}
+
+void setSoundByName(const std::string& value)
+{
+    if (value == "OFF") sound_mode = SoundMode::Off;
+    else if (value == "LOW") sound_mode = SoundMode::Low;
+    else if (value == "LOUD") sound_mode = SoundMode::Loud;
+    else if (value == "MAX") sound_mode = SoundMode::Max;
+    else sound_mode = SoundMode::Mid;
+}
+
+void setTimeoutByName(const std::string& value)
+{
+    if (value == "SHORT") timeout_mode = TimeoutMode::Short;
+    else if (value == "LONG") timeout_mode = TimeoutMode::Long;
+    else timeout_mode = TimeoutMode::Normal;
 }
 
 bool ensureConfigDir()
@@ -275,7 +329,11 @@ void saveConfig()
         config_status = "RAM";
         return;
     }
+    applyPowerSavePreset();
     fprintf(f, "THEME=%s\n", themeName());
+    fprintf(f, "SOUND=%s\n", soundName());
+    fprintf(f, "TIMEOUT=%s\n", timeoutName());
+    fprintf(f, "POWER=%d\n", power_save ? 1 : 0);
     fclose(f);
     config_status = "SAVED";
 }
@@ -294,8 +352,12 @@ void loadConfig()
         std::string s = line;
         while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
         if (s.rfind("THEME=", 0) == 0) setThemeByName(s.substr(6));
+        else if (s.rfind("SOUND=", 0) == 0) setSoundByName(s.substr(6));
+        else if (s.rfind("TIMEOUT=", 0) == 0) setTimeoutByName(s.substr(8));
+        else if (s.rfind("POWER=", 0) == 0) power_save = s.substr(6) == "1";
     }
     fclose(f);
+    applyPowerSavePreset();
     config_status = "LOADED";
 }
 
@@ -2424,13 +2486,15 @@ void startAlert(uint32_t ms)
     alert_until_ms = M5.millis() + ms;
     last_alert_beep_ms = 0;
     M5.Speaker.begin();
+    M5.Speaker.setVolume(soundVolume());
 }
 
 void updateAlert()
 {
     uint32_t now = M5.millis();
-    if (alert_until_ms == 0 || now > alert_until_ms) return;
+    if (alert_until_ms == 0 || now > alert_until_ms || sound_mode == SoundMode::Off) return;
     if (last_alert_beep_ms == 0 || now - last_alert_beep_ms > 650) {
+        M5.Speaker.setVolume(soundVolume());
         M5.Speaker.tone(880, 160);
         last_alert_beep_ms = now;
     }
@@ -2618,9 +2682,9 @@ void drawSettings()
         canvas.setCursor(8, 34 + (i - start) * 23);
         canvas.setTextColor(i == settings_cursor ? uiBg() : uiFg(), i == settings_cursor ? uiFg() : uiBg());
         if (i == 0) canvas.printf("%c THEME %s", i == settings_cursor ? '>' : ' ', themeName());
-        else if (i == 1) canvas.printf("%c SOUND later", i == settings_cursor ? '>' : ' ');
-        else if (i == 2) canvas.printf("%c TIMEOUT later", i == settings_cursor ? '>' : ' ');
-        else if (i == 3) canvas.printf("%c POWER later", i == settings_cursor ? '>' : ' ');
+        else if (i == 1) canvas.printf("%c SOUND %s", i == settings_cursor ? '>' : ' ', soundName());
+        else if (i == 2) canvas.printf("%c TIMEOUT %s", i == settings_cursor ? '>' : ' ', timeoutName());
+        else if (i == 3) canvas.printf("%c POWER %s", i == settings_cursor ? '>' : ' ', power_save ? "ON" : "OFF");
         else if (i == 4) canvas.printf("%c SD status", i == settings_cursor ? '>' : ' ');
         else canvas.printf("%c COMM later", i == settings_cursor ? '>' : ' ');
     }
@@ -2706,16 +2770,28 @@ void updateSpeedReader()
 void updatePower()
 {
     uint32_t idle = M5.millis() - last_input_ms;
+    uint32_t play_dim = 10000;
+    uint32_t play_off = 30000;
+    uint32_t idle_off = 60000;
+    if (timeout_mode == TimeoutMode::Short) {
+        play_dim = 5000;
+        play_off = 15000;
+        idle_off = 30000;
+    } else if (timeout_mode == TimeoutMode::Long) {
+        play_dim = 30000;
+        play_off = 90000;
+        idle_off = 180000;
+    }
     if (playing) {
-        if (idle > 30000 && !display_off) {
+        if (idle > play_off && !display_off) {
             M5.Display.setBrightness(0);
             display_off = true;
             display_dim = false;
-        } else if (idle > 10000 && !display_dim && !display_off) {
+        } else if (idle > play_dim && !display_dim && !display_off) {
             M5.Display.setBrightness(15);
             display_dim = true;
         }
-    } else if (idle > 60000 && !display_off) {
+    } else if (idle > idle_off && !display_off) {
         M5.Display.setBrightness(0);
         display_off = true;
         display_dim = false;
@@ -3210,9 +3286,21 @@ void handleKey(KeyEvent ev)
     if (screen == Screen::Settings) {
         if (ev.key == Key::Up) settings_cursor = std::max(0, settings_cursor - 1);
         else if (ev.key == Key::Down) settings_cursor = std::min(5, settings_cursor + 1);
-        else if ((ev.key == Key::Left || ev.key == Key::Right || ev.key == Key::Ok) && settings_cursor == 0) {
-            int dir = ev.key == Key::Left ? 3 : 1;
-            theme_mode = static_cast<ThemeMode>((static_cast<int>(theme_mode) + dir) % 4);
+        else if (ev.key == Key::Left || ev.key == Key::Right || ev.key == Key::Ok) {
+            int dir = ev.key == Key::Left ? -1 : 1;
+            if (settings_cursor == 0) {
+                theme_mode = static_cast<ThemeMode>((static_cast<int>(theme_mode) + (dir < 0 ? 3 : 1)) % 4);
+                power_save = false;
+            } else if (settings_cursor == 1) {
+                sound_mode = static_cast<SoundMode>((static_cast<int>(sound_mode) + (dir < 0 ? 4 : 1)) % 5);
+                power_save = false;
+            } else if (settings_cursor == 2) {
+                timeout_mode = static_cast<TimeoutMode>((static_cast<int>(timeout_mode) + (dir < 0 ? 2 : 1)) % 3);
+                power_save = false;
+            } else if (settings_cursor == 3) {
+                power_save = !power_save;
+                applyPowerSavePreset();
+            }
             saveConfig();
             blockInput(220);
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
