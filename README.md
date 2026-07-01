@@ -36,6 +36,9 @@ Confirmed on real Cardputer ADV:
   - shows SD free/used storage status;
   - opens `.MP3`, `.TXT`, and `.WAV` files through existing Music/Reader/Notes/Record paths;
   - delete/rename are intentionally not implemented yet.
+- Randomizer app:
+  - rolls `YES`, `NO`, or `MB` using `esp_random()`;
+  - does not store history yet.
 - Time app:
   - includes Clock, Stopwatch, Timer, and Alarm modes;
   - Left / Right switches mode;
@@ -145,6 +148,13 @@ Replace `/dev/cu.usbmodem101` with the actual port.
 4. Timer: `1` selects hour/min/sec, Up / Down changes selected field, `OK` start/stop, `1` reset when running/done.
 5. Clock: `1` selects hour/min/sec, Up / Down adjusts manually.
 6. Alarm: `1` selects hour/min/sec, Up / Down adjusts, `OK` arms/disarms or stops ringing.
+
+### Randomizer
+
+1. Open Random.
+2. Press `OK`.
+3. Confirm result changes between `YES`, `NO`, and `MB`.
+4. Press `GO` to return to launcher.
 
 ### Record
 

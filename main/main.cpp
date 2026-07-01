@@ -54,7 +54,7 @@ bool sd_ready = false;
 
 LGFX_Sprite canvas(&M5.Display);
 
-enum class Screen { Launcher, MusicList, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, RecorderList, RecorderRecording, RecorderPlaying, TimeApp, FilesList, Message };
+enum class Screen { Launcher, MusicList, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, RecorderList, RecorderRecording, RecorderPlaying, TimeApp, FilesList, Randomizer, Message };
 enum class Key { None, Up, Down, Left, Right, Ok, Back, Home, One, Backspace };
 enum class VolumeMode { Mute = 0, Mid = 1, Loud = 2 };
 enum class SpeedMode { OneWord = 0, TwoWords = 1, Line = 2 };
@@ -191,6 +191,7 @@ bool alarm_ringing = false;
 uint32_t last_alarm_day = 999999;
 uint32_t alert_until_ms = 0;
 uint32_t last_alert_beep_ms = 0;
+std::string random_result = "READY";
 
 void flushKeyboardEvents()
 {
@@ -1397,7 +1398,8 @@ bool sdUsage(uint64_t* total, uint64_t* free_bytes)
 
 void drawLauncher()
 {
-    static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] FILES"};
+    static const char* labels[] = {"[#] MUSIC", "[=] READER", "[+] NOTES", "[o] RECORD", "[~] TIME", "[*] FILES", "[?] RANDOM"};
+    constexpr int launcher_count = sizeof(labels) / sizeof(labels[0]);
     canvas.fillScreen(TFT_BLACK);
     canvas.setTextSize(2);
     canvas.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -1406,8 +1408,8 @@ void drawLauncher()
     drawBatteryWidget(166, 8);
     canvas.setTextSize(2);
     int start = std::max(0, launcher_index - 1);
-    start = std::min(start, 3);
-    for (int i = start; i < std::min(6, start + 3); ++i) {
+    start = std::min(start, std::max(0, launcher_count - 3));
+    for (int i = start; i < std::min(launcher_count, start + 3); ++i) {
         canvas.setCursor(8, 38 + (i - start) * 24);
         canvas.setTextColor(i == launcher_index ? TFT_BLACK : TFT_WHITE, i == launcher_index ? TFT_WHITE : TFT_BLACK);
         canvas.printf("%c %s", i == launcher_index ? '>' : ' ', labels[i]);
@@ -1416,6 +1418,23 @@ void drawLauncher()
     canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
     canvas.setCursor(8, 122);
     canvas.print("OK OPEN   GO MUSIC");
+    canvas.pushSprite(0, 0);
+}
+
+void drawRandomizer()
+{
+    canvas.fillScreen(TFT_BLACK);
+    canvas.setTextSize(2);
+    canvas.setTextColor(TFT_WHITE, TFT_BLACK);
+    canvas.setCursor(8, 8);
+    canvas.print("RANDOM");
+    canvas.setTextSize(3);
+    canvas.setCursor(24, 52);
+    canvas.print(random_result.c_str());
+    canvas.setTextSize(1);
+    canvas.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    canvas.setCursor(8, 122);
+    canvas.print("OK ROLL   GO BACK");
     canvas.pushSprite(0, 0);
 }
 
@@ -2156,6 +2175,7 @@ void drawIfDirty()
     else if (screen == Screen::RecorderPlaying) drawRecorderPlaying();
     else if (screen == Screen::TimeApp) drawTimeApp();
     else if (screen == Screen::FilesList) drawFilesList();
+    else if (screen == Screen::Randomizer) drawRandomizer();
     else drawMessage();
     dirty = false;
 }
@@ -2217,7 +2237,7 @@ void handleKey(KeyEvent ev)
 
     if (screen == Screen::Launcher) {
         if (ev.key == Key::Up) launcher_index = std::max(0, launcher_index - 1);
-        else if (ev.key == Key::Down) launcher_index = std::min(5, launcher_index + 1);
+        else if (ev.key == Key::Down) launcher_index = std::min(6, launcher_index + 1);
         else if (ev.key == Key::Home) { launcher_index = 0; scanMusic(); screen = Screen::MusicList; }
         else if (ev.key == Key::Ok) {
             if (launcher_index == 0) { scanMusic(); screen = Screen::MusicList; }
@@ -2226,6 +2246,7 @@ void handleKey(KeyEvent ev)
             else if (launcher_index == 3) { scanRecordings(); screen = Screen::RecorderList; }
             else if (launcher_index == 4) { time_mode = TimeMode::Clock; clock_base_ms = M5.millis(); screen = Screen::TimeApp; blockInput(250); }
             else if (launcher_index == 5) { scanFiles(MOUNT_POINT); screen = Screen::FilesList; blockInput(250); }
+            else if (launcher_index == 6) { random_result = "READY"; screen = Screen::Randomizer; blockInput(250); }
             else { message_title = "Coming soon"; message_body = "Music/Reader/Record"; message_returns_music = false; screen = Screen::Message; }
         }
         dirty = true;
@@ -2566,6 +2587,19 @@ void handleKey(KeyEvent ev)
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
             if (files_path == MOUNT_POINT) screen = Screen::Launcher;
             else scanFiles(parentPath(files_path));
+            blockInput(250);
+        }
+        dirty = true;
+        return;
+    }
+
+    if (screen == Screen::Randomizer) {
+        if (ev.key == Key::Ok) {
+            static const char* results[] = {"YES", "NO", "MB"};
+            random_result = results[esp_random() % 3];
+            blockInput(220);
+        } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            screen = Screen::Launcher;
             blockInput(250);
         }
         dirty = true;
