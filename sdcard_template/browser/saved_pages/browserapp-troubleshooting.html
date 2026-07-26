@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cardputer BrowserApp Troubleshooting</title>
+</head>
+<body>
+  <header>
+    <p>Cardputer BrowserApp text-first troubleshooting artifact</p>
+    <h1>BrowserApp Troubleshooting</h1>
+    <p>Use this page when BrowserApp fetches a page but the result is blank, partial, unreadable, or missing expected links. BrowserApp intentionally favors bounded text extraction over full browser compatibility.</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Fast Triage</h2>
+      <ol>
+        <li>Confirm Wi-Fi is connected in NetworkApp.</li>
+        <li>Retry with a simpler source page or direct article URL, not a home page.</li>
+        <li>Check whether the target page depends on heavy JavaScript for core content.</li>
+        <li>Check whether the page is mainly images/cards/video embeds instead of text.</li>
+        <li>Try saving the page and reopening it from local storage if the fetch succeeded once.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Expected Limits</h2>
+      <ul>
+        <li>JavaScript-rendered page: may extract little or no content.</li>
+        <li>Image-heavy layout: text may be incomplete.</li>
+        <li>Complex multi-column site: reading order may collapse poorly.</li>
+        <li>Interactive controls only: BrowserApp is not a full browser.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Good Target Pages</h2>
+      <ul>
+        <li>single-article pages;</li>
+        <li>plain HTML notes and reports;</li>
+        <li>docs or explainers with one-column structure;</li>
+        <li>self-contained HTML files exported specifically for Cardputer.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Recommended Authoring Pattern</h2>
+      <p>If a page is meant to be read on Cardputer, prefer the local single-file HTML contract and avoid required JavaScript, hidden critical content, and image-only meaning.</p>
+    </section>
+  </main>
+</body>
+</html>
