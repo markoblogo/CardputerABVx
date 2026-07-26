@@ -2,6 +2,28 @@
 
 Integrated PlatformIO firmware shell for M5Stack Cardputer ADV. It uses one menu, one app interface, centralized input, centralized power handling, centralized SD paths, and terminal-style UI.
 
+## System Map
+
+```mermaid
+flowchart LR
+    Device["Cardputer hardware<br/>keyboard · screen · speaker · mic · Wi-Fi · SD"]
+    Core["Core managers<br/>Input · Power · TerminalUI · Storage · Settings · App · Network"]
+    Apps["App shell and feature apps"]
+    SD["SD card content and config"]
+    Services["Local/device-facing services<br/>HTTP file manager · AI endpoint · NTP · Wi-Fi"]
+    User["On-device user flows"]
+
+    Device --> Core
+    Core --> Apps
+    SD --> Core
+    SD --> Apps
+    Services --> Core
+    Apps --> User
+    User --> Device
+```
+
+Keep this map updated when hardware dependencies, core manager ownership, SD layout, or external service boundaries change.
+
 ## Build
 
 ```sh
