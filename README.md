@@ -246,3 +246,7 @@ Starter templates:
 Real artifact:
 
 - [docs/browserapp-troubleshooting-page.html](docs/browserapp-troubleshooting-page.html)
+
+SD-ready saved page:
+
+- [sdcard_template/browser/saved_pages/browserapp-troubleshooting.html](sdcard_template/browser/saved_pages/browserapp-troubleshooting.html)
