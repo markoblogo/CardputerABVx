@@ -177,6 +177,28 @@ Or open `tools/ABVx Companion.app` in Finder to launch it without Terminal.
 
 It opens `http://127.0.0.1:8765` and provides automatic SD/USB status, drag-and-drop Books and Music import, Time Sync, firmware Build, and guarded Flash. It binds only to localhost, uses a per-launch request token, and accepts only fixed operations. The current version uses the locally installed ESP-IDF 5.4.2 toolchain.
 
+## System Map
+
+```mermaid
+flowchart LR
+    Device["Cardputer hardware<br/>keyboard · screen · speaker · mic · Wi-Fi · SD"]
+    Core["Core managers<br/>Input · Power · TerminalUI · Storage · Settings · App · Network"]
+    Apps["App shell and feature apps"]
+    SD["SD card content and config"]
+    Services["Local/device-facing services<br/>HTTP file manager · AI endpoint · NTP · Wi-Fi"]
+    User["On-device user flows"]
+
+    Device --> Core
+    Core --> Apps
+    SD --> Core
+    SD --> Apps
+    Services --> Core
+    Apps --> User
+    User --> Device
+```
+
+Keep this map updated when hardware dependencies, core manager ownership, SD layout, or external service boundaries change.
+
 ## Build
 
 ```sh
