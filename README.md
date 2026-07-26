@@ -233,3 +233,12 @@ idf.py -p /dev/cu.usbmodem101 flash
 9. Settings: SD reprobe, About, config/theme.
 10. Connections: AP starts, `/api/ping`, list, download, write-test.
 11. Dashboard: `D` or `0` opens Resume/status; Settings About shows the current ABVx Pocket OS build.
+
+## HTML Artifacts For BrowserApp
+
+For pages that should remain readable in the text-first BrowserApp flow, use the local single-file HTML contract in [docs/html-artifact-contract.md](docs/html-artifact-contract.md).
+
+Starter templates:
+
+- [templates/html/cardputer-status-report.html](templates/html/cardputer-status-report.html)
+- [templates/html/cardputer-reference-page.html](templates/html/cardputer-reference-page.html)
