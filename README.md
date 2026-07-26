@@ -169,3 +169,7 @@ Starter templates:
 
 - [templates/html/cardputer-status-report.html](templates/html/cardputer-status-report.html)
 - [templates/html/cardputer-reference-page.html](templates/html/cardputer-reference-page.html)
+
+Real artifact:
+
+- [docs/browserapp-troubleshooting-page.html](docs/browserapp-troubleshooting-page.html)
