@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cardputer Status Report Template</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: Arial, sans-serif; line-height: 1.5; margin: 0; padding: 1.25rem; max-width: 48rem; }
+    header, main, footer { display: block; }
+    h1, h2, h3 { line-height: 1.2; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid currentColor; padding: 0.45rem; text-align: left; vertical-align: top; }
+    code { font-family: "SFMono-Regular", monospace; }
+    .lede { font-size: 1.05rem; }
+    .muted { opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="muted">Single-file, text-first HTML artifact</p>
+    <h1>Status Report</h1>
+    <p class="lede">Current state in one paragraph. Lead with what changed, what works, what is blocked, and what the reader should do next.</p>
+  </header>
+
+  <main>
+    <section aria-labelledby="summary">
+      <h2 id="summary">Summary</h2>
+      <ul>
+        <li><strong>Status:</strong> green / yellow / red</li>
+        <li><strong>Date:</strong> YYYY-MM-DD</li>
+        <li><strong>Owner:</strong> name or role</li>
+        <li><strong>Scope:</strong> system, feature, or build under review</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="highlights">
+      <h2 id="highlights">Highlights</h2>
+      <ul>
+        <li>Most important completed item</li>
+        <li>Main risk or blocker</li>
+        <li>Next decision or verification step</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="checks">
+      <h2 id="checks">Checks</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Result</th>
+            <th>Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Build</td>
+            <td>pass / fail / not run</td>
+            <td>command, commit, or note</td>
+          </tr>
+          <tr>
+            <td>Device or runtime proof</td>
+            <td>pass / fail / not run</td>
+            <td>what was actually observed</td>
+          </tr>
+          <tr>
+            <td>Known limitation review</td>
+            <td>pass / fail / partial</td>
+            <td>short explanation</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="next-steps">
+      <h2 id="next-steps">Next Steps</h2>
+      <ol>
+        <li>First bounded next step</li>
+        <li>Second bounded next step</li>
+        <li>Approval or evidence still required</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>
+    <p class="muted">This page should remain readable with no JavaScript and minimal CSS support.</p>
+  </footer>
+</body>
+</html>

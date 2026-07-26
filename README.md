@@ -160,3 +160,12 @@ Config files:
 - Web file manager has basic local-network endpoints without authentication by default.
 - Clock NTP uses Europe/Paris timezone; manual time editing is minimal.
 - Screen-off mode uses backlight brightness. Deep sleep is intentionally not used while background work may be active.
+
+## HTML Artifacts For BrowserApp
+
+For pages that should remain readable in the text-first BrowserApp flow, use the local single-file HTML contract in [docs/html-artifact-contract.md](docs/html-artifact-contract.md).
+
+Starter templates:
+
+- [templates/html/cardputer-status-report.html](templates/html/cardputer-status-report.html)
+- [templates/html/cardputer-reference-page.html](templates/html/cardputer-reference-page.html)
