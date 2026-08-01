@@ -177,3 +177,7 @@ Real artifact:
 SD-ready saved page:
 
 - [sdcard_template/browser/saved_pages/browserapp-troubleshooting.html](sdcard_template/browser/saved_pages/browserapp-troubleshooting.html)
+
+Offline transfer experiment:
+
+- [docs/OPTICAL_TRANSFER_EXPERIMENT.md](docs/OPTICAL_TRANSFER_EXPERIMENT.md)
