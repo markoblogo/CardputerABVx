@@ -528,7 +528,6 @@ ClockApp clockApp;
 #endif
 #if !FEATURE_ULTRA_SAFE_BOOT && FEATURE_NETWORK
 NetworkApp networkApp;
-CastSettingsApp castSettingsApp;
 #endif
 #if !FEATURE_ULTRA_SAFE_BOOT && FEATURE_WEB_FILE_MANAGER
 WebFileManagerApp webFileManagerApp;
@@ -571,7 +570,6 @@ static void registerApps() {
 #endif
 #if FEATURE_NETWORK
   apps.add(&networkApp);
-  apps.add(&castSettingsApp);
 #endif
 #if FEATURE_WEB_FILE_MANAGER
   apps.add(&webFileManagerApp);

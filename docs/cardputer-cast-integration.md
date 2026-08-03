@@ -10,7 +10,7 @@ The Cardputer Music app can control playback on a desktop YTMamp instance over L
 
 ## Configuration
 
-Settings are stored in `/config/settings.json` and exposed through the **Cast Settings** app.
+Settings are stored in `/config/settings.json` and configured in **Network** app (Cast section).
 
 - `castHost`: host/IP of the YTMamp machine (for example `192.168.4.1`)
 - `castPort`: HTTP port of YTMamp local API (default `3000`)
@@ -22,7 +22,7 @@ Defaults are used when fields are missing:
 ## Usage flow
 
 1. Open **Network** and connect to Wi-Fi.
-2. Open **Cast Settings** and save host/port.
+2. In **Network**, open `Cast Host` or `Cast Port`, edit values, and save.
 3. Open **Music**.
 4. Press `GO` (short) to switch between Local and CAST mode.
 5. In CAST mode:

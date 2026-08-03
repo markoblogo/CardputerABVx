@@ -87,7 +87,7 @@ Never commit real API keys.
 If you run YTMamp on a PC in the same Wi‑Fi network, you can control it from Cardputer:
 
 1. Open **Network** and connect Cardputer to the same LAN as the PC.
-2. Open **Cast Settings** from launcher.
+2. Open **Network** and edit `Cast Host` / `Cast Port`.
 3. Set:
    - `cast host` — PC IP (`192.168.4.1` by default)
    - `cast port` — HTTP port (`3000` by default)

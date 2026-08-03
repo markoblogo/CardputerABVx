@@ -435,108 +435,6 @@ void MusicApp::refreshLibrary() {
   state_ = files_.count() ? State::Ready : State::Empty;
 }
 
-void CastSettingsApp::begin(AppContext& context) {
-  App::begin(context);
-  loadFromSettings();
-  lastStatusMs_ = 0;
-}
-
-void CastSettingsApp::loadFromSettings() {
-  if (!ctx_ || !ctx_->settings) return;
-  host_ = ctx_->settings->get().castHost;
-  if (host_.length() == 0) host_ = "192.168.4.1";
-  port_ = ctx_->settings->get().castPort ? ctx_->settings->get().castPort : 3000;
-}
-
-void CastSettingsApp::saveToSettings() {
-  if (!ctx_ || !ctx_->settings) return;
-  syncHostFromEditor();
-  syncPortFromEditor();
-  ctx_->settings->edit().castHost = host_;
-  ctx_->settings->edit().castPort = port_;
-  ctx_->settings->save();
-  status_ = "saved";
-  lastStatusMs_ = millis();
-}
-
-void CastSettingsApp::syncHostFromEditor() {
-  if (!editing_ || !editHost_) return;
-  String nextHost = editor_.text();
-  nextHost.trim();
-  if (nextHost.length() == 0) nextHost = "192.168.4.1";
-  host_ = nextHost;
-}
-
-void CastSettingsApp::syncPortFromEditor() {
-  if (!editing_ || editHost_) return;
-  const uint32_t parsed = editor_.text().toInt();
-  uint16_t nextPort = (parsed == 0 || parsed > 65535) ? 3000 : static_cast<uint16_t>(parsed);
-  port_ = nextPort;
-}
-
-void CastSettingsApp::beginFieldEdit(bool hostField) {
-  if (!ctx_) return;
-  editing_ = true;
-  editHost_ = hostField;
-  editor_.setText(hostField ? host_ : String(port_));
-  editor_.markSaved();
-}
-
-void CastSettingsApp::finishEdit(bool save) {
-  if (save) {
-    if (editHost_) syncHostFromEditor();
-    else syncPortFromEditor();
-    saveToSettings();
-  } else {
-    loadFromSettings();
-    status_ = "discarded";
-    lastStatusMs_ = millis();
-  }
-  editing_ = false;
-}
-
-void CastSettingsApp::draw() {
-  if (!ctx_ || !ctx_->ui || !ctx_->settings) return;
-  ctx_->ui->header("Cast Settings");
-  if (editing_) {
-    ctx_->ui->line(2, String("Editing: ") + (editHost_ ? "host" : "port"));
-    String hint = editHost_ ? "host" : "port";
-    ctx_->ui->line(3, String("Input ") + hint + ":", TerminalUI::Yellow);
-    ctx_->ui->line(4, editor_.visibleLine(32), TerminalUI::White);
-    ctx_->ui->line(5, String("Cursor: ") + editor_.text().substring(0, 32), TerminalUI::Dim);
-    return;
-  }
-
-  ctx_->ui->line(2, String("Host: ") + host_);
-  ctx_->ui->line(3, String("Port: ") + port_);
-  ctx_->ui->listItem(5, String("Host") + (selectedField_ == 0 ? " <-" : ""), selectedField_ == 0);
-  ctx_->ui->listItem(6, String("Port") + (selectedField_ == 1 ? " <-" : ""), selectedField_ == 1);
-  if ((millis() - lastStatusMs_) < 2500 && status_.length()) {
-    uint16_t color = status_ == "saved" ? TerminalUI::Green : TerminalUI::Yellow;
-    ctx_->ui->line(8, status_, color);
-  }
-}
-
-void CastSettingsApp::onInput(const InputEvent& e) {
-  if (!ctx_ || !ctx_->settings) return;
-  if (!editing_) {
-    if (pressed(e, InputAction::Up)) selectedField_ = selectedField_ ? 0 : 1;
-    else if (pressed(e, InputAction::Down)) selectedField_ = selectedField_ ? 0 : 1;
-    else if (pressed(e, InputAction::Enter)) beginFieldEdit(selectedField_ == 0);
-    return;
-  }
-
-  if (pressed(e, InputAction::Enter)) {
-    finishEdit(true);
-    return;
-  }
-  if (pressed(e, InputAction::Back)) {
-    finishEdit(false);
-    return;
-  }
-  if (editing_) editor_.onInput(e, false);
-}
-
 void RecorderApp::begin(AppContext& context) {
   App::begin(context);
   M5Cardputer.Mic.begin();
@@ -845,6 +743,12 @@ void ClockApp::syncNtp() {
 
 void NetworkApp::begin(AppContext& context) {
   App::begin(context);
+  loadCastSettings();
+  castSelection_ = 0;
+  selected_ = 0;
+  castEditing_ = false;
+  password_ = false;
+  status_ = "idle";
 }
 
 void NetworkApp::draw() {
@@ -859,10 +763,27 @@ void NetworkApp::draw() {
     return;
   }
   if (!scanCount_) ctx_->ui->line(5, "GO scan. LEFT reconnect saved.");
-  for (uint8_t i = 0; i < 8 && i < scanCount_; ++i) {
+  const int itemLines = min(6, scanCount_);
+  for (uint8_t i = 0; i < itemLines; ++i) {
     String item = ctx_->network->scannedSsid(i) + (ctx_->network->scannedOpen(i) ? " open " : " lock ");
     item += ctx_->network->scannedRssi(i);
-    ctx_->ui->listItem(i + 5, item, i == selected_);
+    const int row = 5 + i;
+    ctx_->ui->listItem(row, item, (castSelection_ == i));
+  }
+  const int castRow = 5 + itemLines;
+  const int portRow = castRow + 1;
+  ctx_->ui->line(castRow, String("Cast Host: ") + castHost_);
+  ctx_->ui->line(portRow, String("Cast Port: ") + String(castPort_));
+  const int selectorRow = 5 + max(itemLines, static_cast<int>(scanCount_)) + 2;
+  if (selectorRow <= 15) {
+    ctx_->ui->listItem(selectorRow, String("Cast Host") + ((castSelection_ == static_cast<int>(scanCount_)) ? " <-" : ""), castSelection_ == static_cast<int>(scanCount_));
+    ctx_->ui->listItem(selectorRow + 1, String("Cast Port") + ((castSelection_ == static_cast<int>(scanCount_) + 1) ? " <-" : ""), castSelection_ == static_cast<int>(scanCount_) + 1);
+  }
+  if (castEditing_) {
+    ctx_->ui->line(selectorRow + 3, String("Editing ") + (castEditHost_ ? "host" : "port"), TerminalUI::Yellow);
+    ctx_->ui->line(selectorRow + 4, castEditor_.visibleLine(28), TerminalUI::White);
+  } else if (castStatus_.length() && (millis() - castStatusMs_ < 2500)) {
+    ctx_->ui->line(selectorRow + 3, castStatus_, castStatus_.startsWith("saved") ? TerminalUI::Green : TerminalUI::Yellow);
   }
 }
 
@@ -873,14 +794,90 @@ void NetworkApp::onInput(const InputEvent& e) {
       bool connected = ctx_->network->connect(ssid_, pass_.text());
       status_ = connected ? "connected" : "connecting";
       password_ = false; pass_.clear();
+    } else if (pressed(e, InputAction::Back)) {
+      password_ = false;
+      pass_.clear();
+      status_ = "cancelled";
     } else pass_.onInput(e, false);
+    return;
+  }
+  if (castEditing_) {
+    if (pressed(e, InputAction::Enter)) {
+      finishCastEdit(true);
+      return;
+    }
+    if (pressed(e, InputAction::Back)) {
+      finishCastEdit(false);
+      return;
+    }
+    castEditor_.onInput(e, false);
     return;
   }
   if (pressed(e, InputAction::Select)) { scanCount_ = ctx_->network->scan(); selected_ = 0; status_ = "scan complete"; }
   else if (pressed(e, InputAction::Left)) { ctx_->network->reconnectKnown(); status_ = "reconnect saved"; }
-  else if (pressed(e, InputAction::Up) && selected_ > 0) --selected_;
-  else if (pressed(e, InputAction::Down) && selected_ < scanCount_ - 1) ++selected_;
-  else if (pressed(e, InputAction::Enter) && scanCount_ > 0) { ssid_ = ctx_->network->scannedSsid(selected_); password_ = true; pass_.clear(); }
+  else if (pressed(e, InputAction::Up)) {
+    if (castSelection_ > 0) --castSelection_;
+  }
+  else if (pressed(e, InputAction::Down)) {
+    const uint16_t maxCastIndex = scanCount_ + 1;
+    if (castSelection_ < maxCastIndex) ++castSelection_;
+  }
+  else if (pressed(e, InputAction::Enter)) {
+    if (castSelection_ < scanCount_) {
+      selected_ = castSelection_;
+      ssid_ = ctx_->network->scannedSsid(selected_);
+      password_ = true;
+      pass_.clear();
+    } else if (castSelection_ == scanCount_ || castSelection_ == scanCount_ + 1) {
+      beginCastEdit(castSelection_ == scanCount_);
+    }
+  }
+  if (castSelection_ > static_cast<uint16_t>(scanCount_ + 1)) castSelection_ = static_cast<uint16_t>(scanCount_ + 1);
+  if (scanCount_ > 0) selected_ = min(selected_, scanCount_ - 1);
+}
+
+void NetworkApp::loadCastSettings() {
+  if (!ctx_ || !ctx_->settings) return;
+  castHost_ = ctx_->settings->get().castHost;
+  if (castHost_.length() == 0) castHost_ = "192.168.4.1";
+  castPort_ = ctx_->settings->get().castPort ? ctx_->settings->get().castPort : 3000;
+}
+
+void NetworkApp::saveCastSettings() {
+  if (!ctx_ || !ctx_->settings) return;
+  ctx_->settings->edit().castHost = castHost_;
+  ctx_->settings->edit().castPort = castPort_ ? castPort_ : 3000;
+  ctx_->settings->save();
+  castStatus_ = "saved";
+  castStatusMs_ = millis();
+}
+
+void NetworkApp::beginCastEdit(bool hostField) {
+  if (!ctx_ || !ctx_->settings) return;
+  castEditing_ = true;
+  castEditHost_ = hostField;
+  castEditor_.setText(hostField ? castHost_ : String(castPort_));
+  castEditor_.markSaved();
+}
+
+void NetworkApp::finishCastEdit(bool save) {
+  if (save) {
+    if (castEditHost_) {
+      String nextHost = castEditor_.text();
+      nextHost.trim();
+      castHost_ = nextHost.length() ? nextHost : "192.168.4.1";
+    } else {
+      uint16_t nextPort = static_cast<uint16_t>(castEditor_.text().toInt());
+      if (nextPort == 0 || nextPort > 65535) nextPort = 3000;
+      castPort_ = nextPort;
+    }
+    saveCastSettings();
+  } else {
+    castStatus_ = "discarded";
+    castStatusMs_ = millis();
+  }
+  castEditing_ = false;
+  castEditor_.clear();
 }
 
 void WebFileManagerApp::begin(AppContext& context) {

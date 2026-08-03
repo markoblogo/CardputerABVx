@@ -69,35 +69,6 @@ private:
   void applyCastEndpointFromSettings();
 };
 
-class CastSettingsApp : public App {
-public:
-  void begin(AppContext& context) override;
-  void draw() override;
-  void onInput(const InputEvent& event) override;
-  InputContext inputContext() const override { return editing_ ? InputContext::TextEntry : InputContext::Navigation; }
-  const char* getTitle() const override { return "Cast Settings"; }
-  const char* getHelpLine() const override {
-    return editing_ ? "TYPE  ENT:SAVE  GO:CANCEL" : "UP/DN:FIELD  ENT:EDIT  HOLD GO:BACK";
-  }
-
-private:
-  void loadFromSettings();
-  void saveToSettings();
-  void syncPortFromEditor();
-  void syncHostFromEditor();
-  void beginFieldEdit(bool hostField);
-  void finishEdit(bool save);
-
-  bool editing_ = false;
-  bool editHost_ = true;
-  String host_;
-  uint16_t port_ = 3000;
-  uint8_t selectedField_ = 0;
-  TextEditor editor_;
-  String status_ = "ready";
-  uint32_t lastStatusMs_ = 0;
-};
-
 class RecorderApp : public App {
 public:
   void begin(AppContext& context) override;
@@ -190,17 +161,35 @@ public:
   void begin(AppContext& context) override;
   void draw() override;
   void onInput(const InputEvent& event) override;
-  InputContext inputContext() const override { return password_ ? InputContext::TextEntry : InputContext::Navigation; }
+  InputContext inputContext() const override {
+    return (password_ || castEditing_) ? InputContext::TextEntry : InputContext::Navigation;
+  }
   const char* getTitle() const override { return "Network"; }
-  const char* getHelpLine() const override { return password_ ? "TYPE PASS  ENT:CONNECT  HOLD GO:BACK" : "GO:SCAN  ENT:PASS  UP/DN:SSID"; }
+  const char* getHelpLine() const override {
+    if (password_) return "TYPE PASS  ENT:CONNECT  BKSP:CANCEL";
+    if (castEditing_) return "TYPE ENT:SAVE  BKSP:CANCEL";
+    return "GO:SCAN  ENT:CAST/CONNECT  UP/DN:MOVE";
+  }
 private:
   int scanCount_ = 0;
   int selected_ = 0;
   bool password_ = false;
+  int castSelection_ = 0;
+  bool castEditing_ = false;
+  bool castEditHost_ = true;
   String ssid_;
   TextEditor pass_;
+  TextEditor castEditor_;
+  String castHost_ = "192.168.4.1";
+  uint16_t castPort_ = 3000;
+  String castStatus_ = "ready";
+  uint32_t castStatusMs_ = 0;
   String status_ = "idle";
   uint32_t connectStarted_ = 0;
+  void loadCastSettings();
+  void saveCastSettings();
+  void beginCastEdit(bool hostField);
+  void finishCastEdit(bool save);
 };
 
 class WebFileManagerApp : public App {

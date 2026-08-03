@@ -112,7 +112,7 @@ Configured in `include/Features.h`.
 | FileBrowser | Implemented | Reusable SD file listing and selection. |
 | TextEditor | Implemented | Reusable text input, newline, cursor, delete. |
 | MusicApp | Partial | Real MP3 decode via ESP8266Audio into M5 Speaker, SD file list, pause/resume, next, shuffle, volume. |
-| CastSettingsApp | Implemented | Configure CAST endpoint host/port for LAN control integration. |
+| NetworkApp | Partial | Wi-Fi scan/reconnect plus CAST host/port section in CAST config. |
 | RecorderApp | Partial | Real PCM WAV capture through M5 Mic, RIFF header patching, pause/resume/save flow. |
 | NotesApp | Implemented | List/create/open/edit/save/autosave draft. |
 | ReaderApp | Implemented | TXT listing, normal/speed modes, scrolling/WPM controls. |
@@ -165,7 +165,7 @@ Config files:
 
 ## Cardputer + YTMamp Cast integration
 
-- Open **Cast Settings** from launcher to set:
+- Open **Network** and use the `Cast Host` / `Cast Port` rows to set:
   - `cast host` (e.g. `192.168.4.1`)
   - `cast port` (default `3000`)
 - In **Music** app, press `GO` to switch between local playback and CAST.
