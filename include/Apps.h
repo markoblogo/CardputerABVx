@@ -51,6 +51,8 @@ private:
   uint8_t lastCastAttempts_ = 0;
   String lastCastPath_;
   int lastCastCode_ = 0;
+  bool castTraceMode_ = false;
+  uint32_t lastCastDebugLogMs_ = 0;
   bool castDirty_ = false;
   CardputerCastClient castClient_{castHost_, castPort_};
   CastStatus castStatus_;
@@ -71,6 +73,7 @@ private:
   void refreshLibrary();
   bool fetchCastStatus();
   bool sendCastCommand(const char* action, const String& body = String());
+  void logCastDebug(const String& line);
   bool castMode() const { return mode_ == PlayMode::Cast; }
   void applyCastEndpointFromSettings();
 };

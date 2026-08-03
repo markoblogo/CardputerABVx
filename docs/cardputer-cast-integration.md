@@ -195,9 +195,19 @@ Use this sequence on Cardputer to validate that Cast integration works end-to-en
      - No crash/restart observed during repeated `toggle/next/prev`.
 - In **Network**, press `D` in normal mode to toggle `Cast Debug`.
   - when ON, settings will persist as `castDebug` in `/config/settings.json`.
-- In **Network**, line `Cast Debug` shows current mode.
+  - line `Cast Debug` shows current mode.
+- In **Network**, press `D` in normal mode to toggle `Cast Debug`.
 - In **Music** CAST mode, extra diagnostic line is shown:
   - `DBG: <code> <path>`
   - `<code>` is HTTP status of last request.
   - `<path>` is the path actually used (`/api/cast/status`, `/cast/status`, `/cast/{action}`).
-- Debug mode also writes short path/code notes to SD logs.
+- Press `TXT:T` in CAST mode to open **Cast Trace** status screen:
+  - `Path: ...`
+  - `Code: <status_code> RTT: <latency_ms>ms`
+  - `Attempts: <retry_count>`
+  - `State: OFFLINE/PAUSE/PLAY`
+  - `Last: <last local status message>`
+- Press `TXT:T` again to close trace.
+- Debug mode also writes compact notes to SD logs (max one line / second):
+  - `cast cmd ...`
+  - `cast status ...`

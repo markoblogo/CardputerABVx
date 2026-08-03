@@ -153,6 +153,16 @@ void MusicApp::draw() {
   if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Music");
   if (castMode()) {
+    if (castTraceMode_) {
+      ctx_->ui->line(2, "Cast Trace");
+      ctx_->ui->line(3, String("Path: ") + (lastCastPath_.length() ? lastCastPath_ : "n/a"), TerminalUI::White);
+      ctx_->ui->line(4, String("Code: ") + String(lastCastCode_) + "  RTT: " + String(lastCastNetMs_) + "ms");
+      ctx_->ui->line(5, String("Attempts: ") + String(lastCastAttempts_));
+      ctx_->ui->line(6, String("State: ") + String(castStatus_.connected ? (castStatus_.playing ? "PLAY" : "PAUSE") : "OFFLINE"));
+      ctx_->ui->line(7, String("Last: ") + status_);
+      ctx_->ui->line(10, "TXT:T CLOSE", TerminalUI::Dim);
+      return;
+    }
     ctx_->ui->line(2, String("Mode: CAST (") + castHost_ + ":" + castPort_ + ")");
     String trackLine = castStatus_.title.length() ? castStatus_.title : castStatus_.track;
     if (!trackLine.length()) trackLine = "no track";
@@ -179,6 +189,7 @@ void MusicApp::draw() {
       if (debugPath.length() > 32) debugPath = debugPath.substring(debugPath.length() - 32);
       ctx_->ui->line(12, String("DBG: ") + String(lastCastCode_) + " " + debugPath, TerminalUI::Dim);
     }
+    ctx_->ui->line(13, "TXT:T TRACE", TerminalUI::Dim);
     return;
   }
 
@@ -218,7 +229,16 @@ void MusicApp::draw() {
 
 void MusicApp::onInput(const InputEvent& e) {
   if (!ctx_ || !ctx_->storage) return;
+  if (castMode() && e.action == InputAction::TextChar && (e.text == 't' || e.text == 'T')) {
+    castTraceMode_ = !castTraceMode_;
+    status_ = String("cast trace ") + (castTraceMode_ ? "on" : "off");
+    return;
+  }
   if (pressed(e, InputAction::Back)) {
+    if (castTraceMode_) {
+      castTraceMode_ = false;
+      return;
+    }
     stopTrack();
     mode_ = (mode_ == PlayMode::Local) ? PlayMode::Cast : PlayMode::Local;
     status_ = String("mode ") + (mode_ == PlayMode::Cast ? "cast" : "local");
@@ -228,6 +248,7 @@ void MusicApp::onInput(const InputEvent& e) {
       applyCastEndpointFromSettings();
       fetchCastStatus();
     } else {
+      castTraceMode_ = false;
       refreshLibrary();
     }
     return;
@@ -308,16 +329,19 @@ bool MusicApp::sendCastCommand(const char* action, const String& body) {
   const bool ok = castClient_.postCommand(cmd, &status, payload);
   lastCastPath_ = castClient_.lastPath();
   lastCastCode_ = castClient_.lastStatusCode();
-  if (ctx_->storage && ctx_->settings && ctx_->settings->get().castDebug) {
-    const String debug = String("cast cmd path=") + lastCastPath_ + " code=" + String(lastCastCode_);
-    ctx_->storage->log(debug);
-  }
   castPollNowAt_ = now;
   castPollBackoffMs_ = 220;
   if (ok) {
     status_ = status.ok ? "cast ok" : String("cast ") + String(cmd) + " rejected";
     lastCastNetMs_ = castClient_.lastLatencyMs();
     lastCastAttempts_ = castClient_.lastAttemptCount();
+    if (ctx_->settings && ctx_->settings->get().castDebug) {
+      const String debug = String("cast cmd path=") + lastCastPath_ +
+                          " code=" + String(lastCastCode_) +
+                          " rtt=" + String(lastCastNetMs_) + "ms" +
+                          " a=" + String(lastCastAttempts_);
+      logCastDebug(debug);
+    }
     castPollFail_ = 0;
     castStatus_.connected = status.connected;
     castStatus_.playing = status.playing;
@@ -334,10 +358,17 @@ bool MusicApp::sendCastCommand(const char* action, const String& body) {
     castPollBackoffMs_ = 120;
     return true;
   }
-  status_ = "cast command failed";
-  lastCastNetMs_ = castClient_.lastLatencyMs();
-  lastCastAttempts_ = castClient_.lastAttemptCount();
-  if (castPollFail_ < 255) castPollFail_++;
+    status_ = "cast command failed";
+    lastCastNetMs_ = castClient_.lastLatencyMs();
+    lastCastAttempts_ = castClient_.lastAttemptCount();
+    if (ctx_->settings && ctx_->settings->get().castDebug) {
+      const String debug = String("cast cmd path=") + lastCastPath_ +
+                          " code=" + String(lastCastCode_) +
+                          " rtt=" + String(lastCastNetMs_) + "ms" +
+                          " a=" + String(lastCastAttempts_);
+      logCastDebug(debug);
+    }
+    if (castPollFail_ < 255) castPollFail_++;
   castPollBackoffMs_ = 700;
   return false;
 }
@@ -354,13 +385,15 @@ bool MusicApp::fetchCastStatus() {
   if (!castClient_.getStatus(status)) {
     lastCastPath_ = castClient_.lastPath();
     lastCastCode_ = castClient_.lastStatusCode();
-    if (ctx_->storage && ctx_->settings && ctx_->settings->get().castDebug) {
-      const String debug = String("cast status failed path=") + lastCastPath_ + " code=" + String(lastCastCode_);
-      ctx_->storage->log(debug);
-    }
     castPollFail_++;
     lastCastNetMs_ = castClient_.lastLatencyMs();
     lastCastAttempts_ = castClient_.lastAttemptCount();
+    if (ctx_->settings && ctx_->settings->get().castDebug) {
+      logCastDebug(String("cast status failed path=") + lastCastPath_ +
+                   " code=" + String(lastCastCode_) +
+                   " rtt=" + String(lastCastNetMs_) + "ms" +
+                   " a=" + String(lastCastAttempts_));
+    }
     castPollBackoffMs_ = castPollFail_ > 2 ? 1000 : 320;
     if (castPollFail_ > 4) {
       castStatus_.connected = false;
@@ -372,12 +405,14 @@ bool MusicApp::fetchCastStatus() {
   castPollFail_ = 0;
   lastCastPath_ = castClient_.lastPath();
   lastCastCode_ = castClient_.lastStatusCode();
-  if (ctx_->storage && ctx_->settings && ctx_->settings->get().castDebug) {
-    const String debug = String("cast status path=") + lastCastPath_ + " code=" + String(lastCastCode_);
-    ctx_->storage->log(debug);
-  }
   lastCastNetMs_ = castClient_.lastLatencyMs();
   lastCastAttempts_ = castClient_.lastAttemptCount();
+  if (ctx_->settings && ctx_->settings->get().castDebug) {
+    logCastDebug(String("cast status path=") + lastCastPath_ +
+                 " code=" + String(lastCastCode_) +
+                 " rtt=" + String(lastCastNetMs_) + "ms" +
+                 " a=" + String(lastCastAttempts_));
+  }
   castPollBackoffMs_ = 0;
   castDirty_ = true;
   castStatus_.connected = status.connected;
@@ -400,6 +435,14 @@ bool MusicApp::fetchCastStatus() {
     castStatus_.durationMs = 0;
   }
   return true;
+}
+
+void MusicApp::logCastDebug(const String& line) {
+  if (!ctx_ || !ctx_->storage || !ctx_->settings || !ctx_->settings->get().castDebug) return;
+  const uint32_t now = millis();
+  if (lastCastDebugLogMs_ && (now - lastCastDebugLogMs_) < 1000) return;
+  lastCastDebugLogMs_ = now;
+  ctx_->storage->log(line);
 }
 
 void MusicApp::applyCastEndpointFromSettings() {
