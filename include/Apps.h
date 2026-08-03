@@ -3,6 +3,7 @@
 #include "App.h"
 #include "FileBrowser.h"
 #include "TextEditor.h"
+#include "CardputerCastClient.h"
 #include <FS.h>
 #include <WebServer.h>
 
@@ -18,12 +19,34 @@ public:
   void draw() override;
   void onInput(const InputEvent& event) override;
   const char* getTitle() const override { return "Music"; }
-  const char* getHelpLine() const override { return "GO PLAY/PAUSE  > NEXT  UP/DN VOL  HOLD GO:BACK"; }
+  const char* getHelpLine() const override { return "SEL/ENT:PLAY  </> NEXT/PREV  UP/DN VOL  BACK:CAST  HOLD BACK:MENU"; }
   bool wantsBackgroundWork() const override { return playing_; }
 private:
+  enum class PlayMode { Local, Cast };
   enum class State { NoSD, DirMissing, Empty, Ready };
+  struct CastStatus {
+    bool connected = false;
+    bool playing = false;
+    String track = "";
+    String title = "";
+    String artist = "";
+    String album = "";
+    uint32_t positionMs = 0;
+    uint32_t durationMs = 0;
+    uint8_t volume = 0;
+    String raw = "";
+  };
   FileBrowser files_;
   State state_ = State::NoSD;
+  PlayMode mode_ = PlayMode::Local;
+  String castHost_ = "192.168.4.1";
+  uint16_t castPort_ = 3000;
+  uint32_t castPollAt_ = 0;
+  uint32_t castPollEveryMs_ = 1500;
+  uint8_t castPollFail_ = 0;
+  bool castDirty_ = false;
+  CardputerCastClient castClient_{castHost_, castPort_};
+  CastStatus castStatus_;
   bool playing_ = false;
   bool shuffle_ = false;
   uint8_t volume_ = 7;
@@ -39,6 +62,9 @@ private:
   void nextTrack();
   void applyVolume();
   void refreshLibrary();
+  bool fetchCastStatus();
+  bool sendCastCommand(const char* action, const String& body = String());
+  bool castMode() const { return mode_ == PlayMode::Cast; }
 };
 
 class RecorderApp : public App {

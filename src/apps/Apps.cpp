@@ -116,12 +116,25 @@ void MusicApp::begin(AppContext& context) {
 }
 
 void MusicApp::update() {
-  if (!ctx_ || state_ != State::Ready || !storageReady(ctx_)) return;
-  if (playing_ && mp3_) {
-    if (mp3_->isRunning()) {
-      if (!mp3_->loop()) nextTrack();
-    } else {
-      nextTrack();
+  if (!ctx_) return;
+  if (state_ == State::NoSD || state_ == State::DirMissing) return;
+  if (!castMode() && state_ == State::Ready && storageReady(ctx_)) {
+    if (playing_ && mp3_) {
+      if (mp3_->isRunning()) {
+        if (!mp3_->loop()) nextTrack();
+      } else {
+        nextTrack();
+      }
+    }
+  }
+  if (castMode() && ctx_->network && ctx_->network->connected()) {
+    if (millis() - castPollAt_ >= castPollEveryMs_) {
+      castPollAt_ = millis();
+      if (!fetchCastStatus() && castPollFail_ > 4) {
+        mode_ = PlayMode::Local;
+        status_ = "cast offline, fallback local";
+        refreshLibrary();
+      }
     }
   }
   if (playing_ && millis() - vizTick_ > 120) {
@@ -133,6 +146,28 @@ void MusicApp::update() {
 void MusicApp::draw() {
   if (!ctx_ || !ctx_->ui) return;
   ctx_->ui->header("Music");
+  if (castMode()) {
+    ctx_->ui->line(2, String("Mode: CAST (") + castHost_ + ":" + castPort_ + ")");
+    String trackLine = castStatus_.title.length() ? castStatus_.title : castStatus_.track;
+    if (!trackLine.length()) trackLine = "no track";
+    if (trackLine.length() > 30) trackLine = trackLine.substring(trackLine.length() - 30);
+    ctx_->ui->line(3, trackLine, TerminalUI::White);
+    if (!castStatus_.connected) {
+      ctx_->ui->line(4, "State: OFFLINE", TerminalUI::Red);
+    } else {
+      ctx_->ui->line(4, String("State: ") + (castStatus_.playing ? "PLAY" : "PAUSE"), TerminalUI::Green);
+    }
+    if (castStatus_.durationMs) {
+      uint32_t posSec = castStatus_.positionMs / 1000;
+      uint32_t durSec = castStatus_.durationMs / 1000;
+      ctx_->ui->line(5, String("Pos: ") + posSec + " / " + durSec + " s");
+    }
+    ctx_->ui->line(6, String("Vol: ") + castStatus_.volume);
+    ctx_->ui->line(9, castStatus_.raw);
+    ctx_->ui->line(10, status_, status_.startsWith("error") ? TerminalUI::Red : TerminalUI::Green);
+    return;
+  }
+
   if (state_ == State::NoSD) {
     ctx_->ui->line(2, "SD not mounted");
     ctx_->ui->line(3, "GO Retry");
@@ -169,6 +204,20 @@ void MusicApp::draw() {
 
 void MusicApp::onInput(const InputEvent& e) {
   if (!ctx_ || !ctx_->storage) return;
+  if (pressed(e, InputAction::Back)) {
+    stopTrack();
+    mode_ = (mode_ == PlayMode::Local) ? PlayMode::Cast : PlayMode::Local;
+    status_ = String("mode ") + (mode_ == PlayMode::Cast ? "cast" : "local");
+    castPollAt_ = 0;
+    if (mode_ == PlayMode::Cast) {
+      castStatus_ = {};
+      castClient_.setEndpoint(castHost_, castPort_);
+      fetchCastStatus();
+    } else {
+      refreshLibrary();
+    }
+    return;
+  }
   if (state_ == State::NoSD || state_ == State::DirMissing) {
     if (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter)) {
       refreshLibrary();
@@ -179,10 +228,41 @@ void MusicApp::onInput(const InputEvent& e) {
     if (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter)) refreshLibrary();
     return;
   }
+  if (castMode()) {
+    if (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter)) {
+      if (sendCastCommand("toggle")) status_ = "sent cast toggle";
+      else status_ = "cast command failed";
+    } else if (pressed(e, InputAction::Right)) {
+      if (!sendCastCommand("next")) status_ = "cast next failed";
+      else status_ = "sent next";
+    } else if (pressed(e, InputAction::Left)) {
+      if (!sendCastCommand("prev")) status_ = "cast prev failed";
+      else status_ = "sent prev";
+    } else if (pressed(e, InputAction::Up)) {
+      if (!sendCastCommand("play")) status_ = "cast play failed";
+      else status_ = "sent play";
+    } else if (pressed(e, InputAction::Down)) {
+      if (!sendCastCommand("pause")) status_ = "cast pause failed";
+      else status_ = "sent pause";
+    }
+    return;
+  }
+
   if (pressed(e, InputAction::Select) || pressed(e, InputAction::Enter)) {
-    if (playing_) playing_ = false;
-    else if (mp3_) playing_ = true;
-    else playing_ = startTrack();
+    if (playing_) {
+      playing_ = false;
+      stopTrack();
+    } else if (mp3_) {
+      playing_ = true;
+      applyVolume();
+      if (mp3_->isRunning()) return;
+      else {
+        stopTrack();
+        playing_ = startTrack();
+      }
+    } else {
+      playing_ = startTrack();
+    }
   }
   else if (pressed(e, InputAction::Right)) nextTrack();
   else if (pressed(e, InputAction::Left)) shuffle_ = !shuffle_;
@@ -193,6 +273,77 @@ void MusicApp::onInput(const InputEvent& e) {
     ctx_->settings->edit().shuffle = shuffle_;
     ctx_->settings->save();
   }
+}
+
+bool MusicApp::sendCastCommand(const char* action, const String& body) {
+  String cmd = action ? action : "";
+  if (cmd.length() == 0) return false;
+  if (!ctx_ || !ctx_->network || !ctx_->network->connected()) {
+    status_ = "error: no wifi";
+    return false;
+  }
+
+  castClient_.setEndpoint(castHost_, castPort_);
+  CardputerCastStatus status;
+  const String payload = body.length() ? body : String("{\"action\":\"") + cmd + "\"}";
+  const bool ok = castClient_.postCommand(cmd, &status, payload);
+  if (ok) {
+    status_ = status.ok ? "cast ok" : String("cast ") + String(cmd) + " rejected";
+    castStatus_.connected = status.connected;
+    castStatus_.playing = status.playing;
+    castStatus_.track = status.track.title.length() ? status.track.title : status.track.trackId;
+    castStatus_.title = status.track.title;
+    castStatus_.artist = status.track.artist;
+    castStatus_.album = status.track.album;
+    castStatus_.positionMs = status.track.positionMs;
+    castStatus_.durationMs = status.track.durationMs;
+    castStatus_.volume = status.volume;
+    castStatus_.raw = status.raw.substring(0, 120);
+    return true;
+  }
+  status_ = "cast command failed";
+  return false;
+}
+
+bool MusicApp::fetchCastStatus() {
+  if (!ctx_ || !ctx_->network || !ctx_->network->connected()) {
+    castStatus_.connected = false;
+    status_ = "cast offline";
+    return false;
+  }
+
+  castClient_.setEndpoint(castHost_, castPort_);
+  CardputerCastStatus status;
+  if (!castClient_.getStatus(status)) {
+    castPollFail_++;
+    if (castPollFail_ > 4) {
+      castStatus_.connected = false;
+      status_ = "cast status failed";
+    }
+    return false;
+  }
+
+  castPollFail_ = 0;
+  castDirty_ = true;
+  castStatus_.connected = status.connected;
+  castStatus_.playing = status.playing || status.state.equalsIgnoreCase("playing");
+  castStatus_.title = status.track.title;
+  castStatus_.artist = status.track.artist;
+  castStatus_.album = status.track.album;
+  castStatus_.track = status.track.trackId;
+  castStatus_.positionMs = status.track.positionMs;
+  castStatus_.durationMs = status.track.durationMs;
+  castStatus_.volume = status.volume;
+  castStatus_.raw = status.raw.substring(0, 100);
+  if (!status.ok && status.state.equalsIgnoreCase("stopped")) {
+    castStatus_.title = status.error.length() ? status.error : "no track";
+    castStatus_.artist = "";
+    castStatus_.album = "";
+    castStatus_.track = "";
+    castStatus_.positionMs = 0;
+    castStatus_.durationMs = 0;
+  }
+  return true;
 }
 
 bool MusicApp::startTrack() {
