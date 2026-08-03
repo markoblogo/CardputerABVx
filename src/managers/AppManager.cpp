@@ -1,6 +1,8 @@
 #include "AppManager.h"
 #include "StorageManager.h"
+#include "SettingsManager.h"
 #include "Features.h"
+#include "NetworkManager.h"
 
 #include "TerminalUI.h"
 #include "InputManager.h"
@@ -149,9 +151,10 @@ static const char* appIcon(uint8_t index) {
     "AI",
     "PAY",
     "DIAG",
+    "CAST",
     "INFO"
   };
-  return icons[index % 13];
+  return icons[index % 14];
 }
 
 void AppManager::drawMenu() {
@@ -164,7 +167,16 @@ void AppManager::drawMenu() {
     appIcon(safe),
     safe + 1,
     count_);
-  ctx_->ui->status("UP/DN/< >/TAB:APP  1-0 open", TerminalUI::Dim);
+  String castHost = ctx_->settings ? ctx_->settings->get().castHost : String("192.168.4.1");
+  uint16_t castPort = ctx_->settings ? ctx_->settings->get().castPort : 3000;
+  if (castHost.length() == 0) castHost = "192.168.4.1";
+  if (castPort == 0) castPort = 3000;
+  String castState = String(ctx_->network && ctx_->network->connected() ? "CAST ON " : "CAST OFF");
+  castState += castHost + ":" + String(castPort);
+  ctx_->ui->status(
+    "UP/DN/< >/TAB:APP  1-0 open  " + castState,
+    TerminalUI::Dim
+  );
   ctx_->ui->footer("GO OPEN  HOLD GO:BACK");
 }
 

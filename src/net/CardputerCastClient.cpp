@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Arduino.h>
 
 CardputerCastClient::CardputerCastClient(String host, uint16_t port)
   : host_(host), port_(port) {}
@@ -123,7 +124,7 @@ bool CardputerCastClient::parseStatus(const String& response, CardputerCastStatu
   }
 
   if (out.track.trackId.isEmpty() && !doc["track_id"].isNull()) {
-    out.track.trackId = String(doc["track_id"]);
+    out.track.trackId = String(doc["track_id"] | "");
   }
   if (out.track.durationMs == 0 && doc["duration"].is<uint32_t>()) out.track.durationMs = doc["duration"];
   if (out.track.durationMs == 0 && doc["duration_ms"].is<uint64_t>()) out.track.durationMs = static_cast<uint32_t>(doc["duration_ms"].as<uint64_t>());
@@ -137,12 +138,22 @@ bool CardputerCastClient::getStatus(CardputerCastStatus& out) {
   String response;
   int code = 0;
   String err;
+  const uint8_t attempts = 3;
+  const int timeoutMs = 2200;
 
   const String paths[] = { "/api/cast/status", "/cast/status" };
   for (uint8_t i = 0; i < 2; ++i) {
-    if (!requestJson(paths[i], false, String(), 1000, response, code, err)) continue;
-    if (code < 200 || code >= 300) continue;
-    if (parseStatus(response, out)) return true;
+    const String path = paths[i];
+    for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
+      if (requestJson(path, false, String(), timeoutMs, response, code, err) && code >= 200 && code < 300) {
+        if (parseStatus(response, out)) {
+          return true;
+        }
+      }
+      if (attempt + 1 < attempts) {
+        delay(120);
+      }
+    }
   }
 
   out.connected = false;
@@ -156,22 +167,34 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
   String response;
   int code = 0;
   String err;
+  const uint8_t attempts = 3;
+  const int timeoutMs = 2200;
 
   const String apiPath = "/api/cast/cmd";
-  if (requestJson(apiPath, true, bodyToSend, 1200, response, code, err) && code >= 200 && code < 300) {
-    if (responseStatus) parseStatus(response, *responseStatus);
-    return true;
+  for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
+    if (requestJson(apiPath, true, bodyToSend, timeoutMs, response, code, err) && code >= 200 && code < 300) {
+      if (responseStatus) parseStatus(response, *responseStatus);
+      return true;
+    }
+    if (attempt + 1 < attempts) {
+      delay(120);
+    }
   }
 
   const String legacyPath = String("/cast/") + action;
-  if (requestJson(legacyPath, false, String(), 1200, response, code, err) && code >= 200 && code < 300) {
-    if (responseStatus) {
-      responseStatus->connected = true;
-      responseStatus->ok = true;
-      responseStatus->state = "playing";
-      responseStatus->raw = response.length() ? response : String("{\"ok\":true}");
+  for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
+    if (requestJson(legacyPath, false, String(), timeoutMs, response, code, err) && code >= 200 && code < 300) {
+      if (responseStatus) {
+        responseStatus->connected = true;
+        responseStatus->ok = true;
+        responseStatus->state = "playing";
+        responseStatus->raw = response.length() ? response : String("{\"ok\":true}");
+      }
+      return true;
     }
-    return true;
+    if (attempt + 1 < attempts) {
+      delay(120);
+    }
   }
   if (responseStatus) {
     responseStatus->connected = false;

@@ -27,6 +27,7 @@ private:
   struct CastStatus {
     bool connected = false;
     bool playing = false;
+    String error = "";
     String track = "";
     String title = "";
     String artist = "";
@@ -65,6 +66,36 @@ private:
   bool fetchCastStatus();
   bool sendCastCommand(const char* action, const String& body = String());
   bool castMode() const { return mode_ == PlayMode::Cast; }
+  void applyCastEndpointFromSettings();
+};
+
+class CastSettingsApp : public App {
+public:
+  void begin(AppContext& context) override;
+  void draw() override;
+  void onInput(const InputEvent& event) override;
+  InputContext inputContext() const override { return editing_ ? InputContext::TextEntry : InputContext::Navigation; }
+  const char* getTitle() const override { return "Cast Settings"; }
+  const char* getHelpLine() const override {
+    return editing_ ? "TYPE  ENT:SAVE  GO:CANCEL" : "UP/DN:FIELD  ENT:EDIT  HOLD GO:BACK";
+  }
+
+private:
+  void loadFromSettings();
+  void saveToSettings();
+  void syncPortFromEditor();
+  void syncHostFromEditor();
+  void beginFieldEdit(bool hostField);
+  void finishEdit(bool save);
+
+  bool editing_ = false;
+  bool editHost_ = true;
+  String host_;
+  uint16_t port_ = 3000;
+  uint8_t selectedField_ = 0;
+  TextEditor editor_;
+  String status_ = "ready";
+  uint32_t lastStatusMs_ = 0;
 };
 
 class RecorderApp : public App {

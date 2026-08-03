@@ -11,6 +11,8 @@ struct Settings {
   bool shuffle = false;
   int timezoneOffsetMin = 60;
   String webPin = "";
+  String castHost = "192.168.4.1";
+  uint16_t castPort = 3000;
 };
 
 class SettingsManager {

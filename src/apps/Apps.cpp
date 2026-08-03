@@ -111,6 +111,7 @@ void MusicApp::begin(AppContext& context) {
   files_.begin(*ctx_->storage, "/music", ".mp3");
   volume_ = ctx_->settings ? ctx_->settings->get().volume : volume_;
   shuffle_ = ctx_->settings ? ctx_->settings->get().shuffle : shuffle_;
+  applyCastEndpointFromSettings();
   state_ = State::NoSD;
   refreshLibrary();
 }
@@ -130,6 +131,7 @@ void MusicApp::update() {
   if (castMode() && ctx_->network && ctx_->network->connected()) {
     if (millis() - castPollAt_ >= castPollEveryMs_) {
       castPollAt_ = millis();
+      applyCastEndpointFromSettings();
       if (!fetchCastStatus() && castPollFail_ > 4) {
         mode_ = PlayMode::Local;
         status_ = "cast offline, fallback local";
@@ -163,6 +165,8 @@ void MusicApp::draw() {
       ctx_->ui->line(5, String("Pos: ") + posSec + " / " + durSec + " s");
     }
     ctx_->ui->line(6, String("Vol: ") + castStatus_.volume);
+    ctx_->ui->line(7, String("Track ID: ") + castStatus_.track);
+    ctx_->ui->line(8, String("Err: ") + (castStatus_.error.length() ? castStatus_.error : "none"));
     ctx_->ui->line(9, castStatus_.raw);
     ctx_->ui->line(10, status_, status_.startsWith("error") ? TerminalUI::Red : TerminalUI::Green);
     return;
@@ -211,7 +215,7 @@ void MusicApp::onInput(const InputEvent& e) {
     castPollAt_ = 0;
     if (mode_ == PlayMode::Cast) {
       castStatus_ = {};
-      castClient_.setEndpoint(castHost_, castPort_);
+      applyCastEndpointFromSettings();
       fetchCastStatus();
     } else {
       refreshLibrary();
@@ -283,7 +287,7 @@ bool MusicApp::sendCastCommand(const char* action, const String& body) {
     return false;
   }
 
-  castClient_.setEndpoint(castHost_, castPort_);
+  applyCastEndpointFromSettings();
   CardputerCastStatus status;
   const String payload = body.length() ? body : String("{\"action\":\"") + cmd + "\"}";
   const bool ok = castClient_.postCommand(cmd, &status, payload);
@@ -298,6 +302,8 @@ bool MusicApp::sendCastCommand(const char* action, const String& body) {
     castStatus_.positionMs = status.track.positionMs;
     castStatus_.durationMs = status.track.durationMs;
     castStatus_.volume = status.volume;
+    castStatus_.error = status.error;
+    castStatus_.track = status.track.trackId;
     castStatus_.raw = status.raw.substring(0, 120);
     return true;
   }
@@ -312,7 +318,7 @@ bool MusicApp::fetchCastStatus() {
     return false;
   }
 
-  castClient_.setEndpoint(castHost_, castPort_);
+  applyCastEndpointFromSettings();
   CardputerCastStatus status;
   if (!castClient_.getStatus(status)) {
     castPollFail_++;
@@ -331,6 +337,7 @@ bool MusicApp::fetchCastStatus() {
   castStatus_.artist = status.track.artist;
   castStatus_.album = status.track.album;
   castStatus_.track = status.track.trackId;
+  castStatus_.error = status.error;
   castStatus_.positionMs = status.track.positionMs;
   castStatus_.durationMs = status.track.durationMs;
   castStatus_.volume = status.volume;
@@ -344,6 +351,18 @@ bool MusicApp::fetchCastStatus() {
     castStatus_.durationMs = 0;
   }
   return true;
+}
+
+void MusicApp::applyCastEndpointFromSettings() {
+  if (!ctx_ || !ctx_->settings) return;
+  const Settings& s = ctx_->settings->get();
+  const String host = s.castHost.length() ? s.castHost : "192.168.4.1";
+  const uint16_t port = s.castPort ? s.castPort : 3000;
+  if (castHost_ != host || castPort_ != port) {
+    castHost_ = host;
+    castPort_ = port;
+  }
+  castClient_.setEndpoint(castHost_, castPort_);
 }
 
 bool MusicApp::startTrack() {
@@ -414,6 +433,108 @@ void MusicApp::refreshLibrary() {
   }
   files_.refresh();
   state_ = files_.count() ? State::Ready : State::Empty;
+}
+
+void CastSettingsApp::begin(AppContext& context) {
+  App::begin(context);
+  loadFromSettings();
+  lastStatusMs_ = 0;
+}
+
+void CastSettingsApp::loadFromSettings() {
+  if (!ctx_ || !ctx_->settings) return;
+  host_ = ctx_->settings->get().castHost;
+  if (host_.length() == 0) host_ = "192.168.4.1";
+  port_ = ctx_->settings->get().castPort ? ctx_->settings->get().castPort : 3000;
+}
+
+void CastSettingsApp::saveToSettings() {
+  if (!ctx_ || !ctx_->settings) return;
+  syncHostFromEditor();
+  syncPortFromEditor();
+  ctx_->settings->edit().castHost = host_;
+  ctx_->settings->edit().castPort = port_;
+  ctx_->settings->save();
+  status_ = "saved";
+  lastStatusMs_ = millis();
+}
+
+void CastSettingsApp::syncHostFromEditor() {
+  if (!editing_ || !editHost_) return;
+  String nextHost = editor_.text();
+  nextHost.trim();
+  if (nextHost.length() == 0) nextHost = "192.168.4.1";
+  host_ = nextHost;
+}
+
+void CastSettingsApp::syncPortFromEditor() {
+  if (!editing_ || editHost_) return;
+  const uint32_t parsed = editor_.text().toInt();
+  uint16_t nextPort = (parsed == 0 || parsed > 65535) ? 3000 : static_cast<uint16_t>(parsed);
+  port_ = nextPort;
+}
+
+void CastSettingsApp::beginFieldEdit(bool hostField) {
+  if (!ctx_) return;
+  editing_ = true;
+  editHost_ = hostField;
+  editor_.setText(hostField ? host_ : String(port_));
+  editor_.markSaved();
+}
+
+void CastSettingsApp::finishEdit(bool save) {
+  if (save) {
+    if (editHost_) syncHostFromEditor();
+    else syncPortFromEditor();
+    saveToSettings();
+  } else {
+    loadFromSettings();
+    status_ = "discarded";
+    lastStatusMs_ = millis();
+  }
+  editing_ = false;
+}
+
+void CastSettingsApp::draw() {
+  if (!ctx_ || !ctx_->ui || !ctx_->settings) return;
+  ctx_->ui->header("Cast Settings");
+  if (editing_) {
+    ctx_->ui->line(2, String("Editing: ") + (editHost_ ? "host" : "port"));
+    String hint = editHost_ ? "host" : "port";
+    ctx_->ui->line(3, String("Input ") + hint + ":", TerminalUI::Yellow);
+    ctx_->ui->line(4, editor_.visibleLine(32), TerminalUI::White);
+    ctx_->ui->line(5, String("Cursor: ") + editor_.text().substring(0, 32), TerminalUI::Dim);
+    return;
+  }
+
+  ctx_->ui->line(2, String("Host: ") + host_);
+  ctx_->ui->line(3, String("Port: ") + port_);
+  ctx_->ui->listItem(5, String("Host") + (selectedField_ == 0 ? " <-" : ""), selectedField_ == 0);
+  ctx_->ui->listItem(6, String("Port") + (selectedField_ == 1 ? " <-" : ""), selectedField_ == 1);
+  if ((millis() - lastStatusMs_) < 2500 && status_.length()) {
+    uint16_t color = status_ == "saved" ? TerminalUI::Green : TerminalUI::Yellow;
+    ctx_->ui->line(8, status_, color);
+  }
+}
+
+void CastSettingsApp::onInput(const InputEvent& e) {
+  if (!ctx_ || !ctx_->settings) return;
+  if (!editing_) {
+    if (pressed(e, InputAction::Up)) selectedField_ = selectedField_ ? 0 : 1;
+    else if (pressed(e, InputAction::Down)) selectedField_ = selectedField_ ? 0 : 1;
+    else if (pressed(e, InputAction::Enter)) beginFieldEdit(selectedField_ == 0);
+    return;
+  }
+
+  if (pressed(e, InputAction::Enter)) {
+    finishEdit(true);
+    return;
+  }
+  if (pressed(e, InputAction::Back)) {
+    finishEdit(false);
+    return;
+  }
+  if (editing_) editor_.onInput(e, false);
 }
 
 void RecorderApp::begin(AppContext& context) {
