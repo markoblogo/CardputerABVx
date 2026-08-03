@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 #include <String.h>
+#include <ArduinoJson.h>
 
 struct CardputerCastTrack {
   String trackId;
@@ -37,6 +38,8 @@ public:
   uint16_t lastLatencyMs() const { return lastLatencyMs_; }
   uint8_t lastAttemptCount() const { return lastAttemptCount_; }
   const String& lastError() const { return lastError_; }
+  const String& lastPath() const { return lastPath_; }
+  int lastStatusCode() const { return lastStatusCode_; }
 
   bool getStatus(CardputerCastStatus& out);
   bool postCommand(const String& action, CardputerCastStatus* response = nullptr, const String& body = String());
@@ -54,10 +57,15 @@ private:
   );
   bool parseStatus(const String& response, CardputerCastStatus& out) const;
   bool parseState(const String& stateValue, String& outState, bool& outPlaying) const;
+  bool parseTrackObject(const JsonVariant& node, CardputerCastTrack& track, bool& hasTrack) const;
+  bool parseMsValue(const JsonVariant& value, uint32_t& outMs) const;
+  bool parseStateVariant(const JsonVariant& value, String& state, bool& playing) const;
 
   String host_;
   uint16_t port_;
   uint16_t lastLatencyMs_ = 0;
   uint8_t lastAttemptCount_ = 0;
   String lastError_ = "";
+  String lastPath_;
+  int lastStatusCode_ = 0;
 };

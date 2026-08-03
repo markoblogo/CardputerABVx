@@ -14,6 +14,7 @@ Settings are stored in `/config/settings.json` and configured in **Network** app
 
 - `castHost`: host/IP of the YTMamp machine (for example `192.168.4.1`)
 - `castPort`: HTTP port of YTMamp local API (default `3000`)
+- `castDebug`: enable cast endpoint logging on Cardputer (`true|false`, default `false`)
 
 Defaults are used when fields are missing:
 - host: `192.168.4.1`
@@ -27,7 +28,8 @@ Current format:
 ```json
 {
   "castHost": "192.168.4.1",
-  "castPort": 3000
+  "castPort": 3000,
+  "castDebug": false
 }
 ```
 
@@ -37,6 +39,30 @@ Cardputer uses two API paths with fallback:
 
 - `GET /api/cast/status` then fallback `GET /cast/status`
 - `POST /api/cast/cmd` then fallback `GET /cast/{action}`
+
+### Compatibility shim contract
+
+Для простоты интеграции с чужими версиями YTMamp Cardputer ожидает одинаковый минимальный JSON-ответ на статус-контракт:
+
+- `state` — строка статуса: `playing|paused|stopped|error`
+- `track` — объект с полями `title`, `artist`, `album`, `track_id`, `duration_ms`, `position_ms`
+- `time` — текущее время/позиция в миллисекундах
+- `error` — человекочитаемый текст ошибки (опционально)
+
+Сервер может возвращать расширенный JSON или иные форматы (например `playing`, `paused`, `status`, `track_id`, `duration`, `position`, `timestamp`) — Cardputer-скрипт их нормализует в единый контракт.
+
+Минимальная совместимая форма, если `track` отсутствует:
+
+```json
+{
+  "ok": false,
+  "state": "stopped",
+  "error": "no_active_track",
+  "time": 0
+}
+```
+
+Поддерживается и прямой статус `GET /status` как fallback-совместимость для простых локальных инстансов.
 
 Actions supported for command endpoint:
 - `toggle`, `play`, `pause`, `next`, `prev` (and optional `stop`).
@@ -167,3 +193,11 @@ Use this sequence on Cardputer to validate that Cast integration works end-to-en
      - Cardputer shows `cast offline` and mode still responds.
      - Playback controls still work on SD player via local mode when toggling `GO` back to Local.
      - No crash/restart observed during repeated `toggle/next/prev`.
+- In **Network**, press `D` in normal mode to toggle `Cast Debug`.
+  - when ON, settings will persist as `castDebug` in `/config/settings.json`.
+- In **Network**, line `Cast Debug` shows current mode.
+- In **Music** CAST mode, extra diagnostic line is shown:
+  - `DBG: <code> <path>`
+  - `<code>` is HTTP status of last request.
+  - `<path>` is the path actually used (`/api/cast/status`, `/cast/status`, `/cast/{action}`).
+- Debug mode also writes short path/code notes to SD logs.

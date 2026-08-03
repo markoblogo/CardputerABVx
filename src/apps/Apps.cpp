@@ -174,6 +174,11 @@ void MusicApp::draw() {
     ctx_->ui->line(9, String("Net: ") + (castStatus_.connected ? "on " : "off ") + "a=" + String(lastCastAttempts_) + " rtt=" + String(lastCastNetMs_) + "ms");
     ctx_->ui->line(10, String("Retry: ") + String(castPollFail_));
     ctx_->ui->line(11, status_, status_.startsWith("error") ? TerminalUI::Red : TerminalUI::Green);
+    if (ctx_->settings && ctx_->settings->get().castDebug) {
+      String debugPath = lastCastPath_.length() ? lastCastPath_ : "n/a";
+      if (debugPath.length() > 32) debugPath = debugPath.substring(debugPath.length() - 32);
+      ctx_->ui->line(12, String("DBG: ") + String(lastCastCode_) + " " + debugPath, TerminalUI::Dim);
+    }
     return;
   }
 
@@ -301,6 +306,12 @@ bool MusicApp::sendCastCommand(const char* action, const String& body) {
   CardputerCastStatus status;
   const String payload = body.length() ? body : String("{\"action\":\"") + cmd + "\"}";
   const bool ok = castClient_.postCommand(cmd, &status, payload);
+  lastCastPath_ = castClient_.lastPath();
+  lastCastCode_ = castClient_.lastStatusCode();
+  if (ctx_->storage && ctx_->settings && ctx_->settings->get().castDebug) {
+    const String debug = String("cast cmd path=") + lastCastPath_ + " code=" + String(lastCastCode_);
+    ctx_->storage->log(debug);
+  }
   castPollNowAt_ = now;
   castPollBackoffMs_ = 220;
   if (ok) {
@@ -341,6 +352,12 @@ bool MusicApp::fetchCastStatus() {
   applyCastEndpointFromSettings();
   CardputerCastStatus status;
   if (!castClient_.getStatus(status)) {
+    lastCastPath_ = castClient_.lastPath();
+    lastCastCode_ = castClient_.lastStatusCode();
+    if (ctx_->storage && ctx_->settings && ctx_->settings->get().castDebug) {
+      const String debug = String("cast status failed path=") + lastCastPath_ + " code=" + String(lastCastCode_);
+      ctx_->storage->log(debug);
+    }
     castPollFail_++;
     lastCastNetMs_ = castClient_.lastLatencyMs();
     lastCastAttempts_ = castClient_.lastAttemptCount();
@@ -353,6 +370,12 @@ bool MusicApp::fetchCastStatus() {
   }
 
   castPollFail_ = 0;
+  lastCastPath_ = castClient_.lastPath();
+  lastCastCode_ = castClient_.lastStatusCode();
+  if (ctx_->storage && ctx_->settings && ctx_->settings->get().castDebug) {
+    const String debug = String("cast status path=") + lastCastPath_ + " code=" + String(lastCastCode_);
+    ctx_->storage->log(debug);
+  }
   lastCastNetMs_ = castClient_.lastLatencyMs();
   lastCastAttempts_ = castClient_.lastAttemptCount();
   castPollBackoffMs_ = 0;
@@ -805,6 +828,7 @@ void NetworkApp::draw() {
     ctx_->ui->listItem(selectorRow, String("Cast Host") + ((castSelection_ == static_cast<int>(scanCount_)) ? " <-" : ""), castSelection_ == static_cast<int>(scanCount_));
     ctx_->ui->listItem(selectorRow + 1, String("Cast Port") + ((castSelection_ == static_cast<int>(scanCount_) + 1) ? " <-" : ""), castSelection_ == static_cast<int>(scanCount_) + 1);
   }
+  ctx_->ui->line(15, String("Cast Debug: ") + (castDebug_ ? "ON" : "OFF"));
   if (castEditing_) {
     ctx_->ui->line(selectorRow + 3, String("Editing ") + (castEditHost_ ? "host" : "port"), TerminalUI::Yellow);
     ctx_->ui->line(selectorRow + 4, castEditor_.visibleLine(28), TerminalUI::White);
@@ -839,6 +863,12 @@ void NetworkApp::onInput(const InputEvent& e) {
     castEditor_.onInput(e, false);
     return;
   }
+  if (e.action == InputAction::TextChar && (e.text == 'd' || e.text == 'D')) {
+    castDebug_ = !castDebug_;
+    saveCastSettings();
+    status_ = String("cast debug ") + (castDebug_ ? "on" : "off");
+    return;
+  }
   if (pressed(e, InputAction::Select)) { scanCount_ = ctx_->network->scan(); selected_ = 0; status_ = "scan complete"; }
   else if (pressed(e, InputAction::Left)) { ctx_->network->reconnectKnown(); status_ = "reconnect saved"; }
   else if (pressed(e, InputAction::Up)) {
@@ -867,12 +897,14 @@ void NetworkApp::loadCastSettings() {
   castHost_ = ctx_->settings->get().castHost;
   if (castHost_.length() == 0) castHost_ = "192.168.4.1";
   castPort_ = ctx_->settings->get().castPort ? ctx_->settings->get().castPort : 3000;
+  castDebug_ = ctx_->settings->get().castDebug;
 }
 
 void NetworkApp::saveCastSettings() {
   if (!ctx_ || !ctx_->settings) return;
   ctx_->settings->edit().castHost = castHost_;
   ctx_->settings->edit().castPort = castPort_ ? castPort_ : 3000;
+  ctx_->settings->edit().castDebug = castDebug_;
   ctx_->settings->save();
   castStatus_ = "saved";
   castStatusMs_ = millis();

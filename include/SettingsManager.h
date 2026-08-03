@@ -13,6 +13,7 @@ struct Settings {
   String webPin = "";
   String castHost = "192.168.4.1";
   uint16_t castPort = 3000;
+  bool castDebug = false;
 };
 
 class SettingsManager {

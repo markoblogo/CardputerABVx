@@ -49,6 +49,8 @@ private:
   uint16_t castPollBackoffMs_ = 0;
   uint32_t lastCastNetMs_ = 0;
   uint8_t lastCastAttempts_ = 0;
+  String lastCastPath_;
+  int lastCastCode_ = 0;
   bool castDirty_ = false;
   CardputerCastClient castClient_{castHost_, castPort_};
   CastStatus castStatus_;
@@ -172,7 +174,7 @@ public:
   const char* getHelpLine() const override {
     if (password_) return "TYPE PASS  ENT:CONNECT  BKSP:CANCEL";
     if (castEditing_) return "TYPE ENT:SAVE  BKSP:CANCEL";
-    return "GO:SCAN  ENT:CAST/CONNECT  UP/DN:MOVE";
+    return "GO:SCAN  ENT:CAST/CONNECT  TXT:D TOGGLE CAST DBG  UP/DN:MOVE";
   }
 private:
   int scanCount_ = 0;
@@ -188,6 +190,7 @@ private:
   uint16_t castPort_ = 3000;
   String castStatus_ = "ready";
   uint32_t castStatusMs_ = 0;
+  bool castDebug_ = false;
   String status_ = "idle";
   uint32_t connectStarted_ = 0;
   void loadCastSettings();

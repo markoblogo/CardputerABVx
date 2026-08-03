@@ -21,6 +21,7 @@ bool SettingsManager::begin(StorageManager& storage) {
   settings_.webPin = String(doc["webPin"] | "");
   settings_.castHost = String(doc["castHost"] | settings_.castHost);
   settings_.castPort = doc["castPort"] | settings_.castPort;
+  settings_.castDebug = doc["castDebug"] | settings_.castDebug;
   return true;
 }
 
@@ -35,6 +36,7 @@ void SettingsManager::save() {
   doc["webPin"] = settings_.webPin;
   doc["castHost"] = settings_.castHost;
   doc["castPort"] = settings_.castPort;
+  doc["castDebug"] = settings_.castDebug;
   String out;
   serializeJsonPretty(doc, out);
   storage_->writeText("/config/settings.json", out);
