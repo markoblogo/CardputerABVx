@@ -82,6 +82,30 @@ Set:
 
 Never commit real API keys.
 
+## Configure Cast integration (Cardputer ↔ YTMamp)
+
+If you run YTMamp on a PC in the same Wi‑Fi network, you can control it from Cardputer:
+
+1. Open **Network** and connect Cardputer to the same LAN as the PC.
+2. Open **Cast Settings** from launcher.
+3. Set:
+   - `cast host` — PC IP (`192.168.4.1` by default)
+   - `cast port` — HTTP port (`3000` by default)
+4. Save settings and open **Music**.
+5. Press `GO` (short) to toggle between local player and CAST mode.
+6. In CAST mode:
+   - `SEL/ENT` — toggle
+   - `RIGHT` — next
+   - `LEFT` — prev
+   - `UP` — play
+   - `DOWN` — pause
+   - No auth token required in this MVP.
+
+Quick diagnostics on CAST screen:
+- `Track ID` shows track identifier from `track.track_id`.
+- `Err` shows last server-side error string if present.
+- If desktop endpoint is unavailable, local SD playback remains available.
+
 ## Launcher Controls
 
 - `1-0`: open app by index.

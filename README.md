@@ -10,7 +10,7 @@ flowchart LR
     Core["Core managers<br/>Input · Power · TerminalUI · Storage · Settings · App · Network"]
     Apps["App shell and feature apps"]
     SD["SD card content and config"]
-    Services["Local/device-facing services<br/>HTTP file manager · AI endpoint · NTP · Wi-Fi"]
+    Services["Local/device-facing services<br/>HTTP file manager · AI endpoint · Cast integration · NTP · Wi-Fi"]
     User["On-device user flows"]
 
     Device --> Core
@@ -112,6 +112,7 @@ Configured in `include/Features.h`.
 | FileBrowser | Implemented | Reusable SD file listing and selection. |
 | TextEditor | Implemented | Reusable text input, newline, cursor, delete. |
 | MusicApp | Partial | Real MP3 decode via ESP8266Audio into M5 Speaker, SD file list, pause/resume, next, shuffle, volume. |
+| CastSettingsApp | Implemented | Configure CAST endpoint host/port for LAN control integration. |
 | RecorderApp | Partial | Real PCM WAV capture through M5 Mic, RIFF header patching, pause/resume/save flow. |
 | NotesApp | Implemented | List/create/open/edit/save/autosave draft. |
 | ReaderApp | Implemented | TXT listing, normal/speed modes, scrolling/WPM controls. |
@@ -160,6 +161,21 @@ Config files:
 - Web file manager has basic local-network endpoints without authentication by default.
 - Clock NTP uses Europe/Paris timezone; manual time editing is minimal.
 - Screen-off mode uses backlight brightness. Deep sleep is intentionally not used while background work may be active.
+- Web cast control requires the Cardputer and YTMamp backend on the same LAN and reachable host/port.
+
+## Cardputer + YTMamp Cast integration
+
+- Open **Cast Settings** from launcher to set:
+  - `cast host` (e.g. `192.168.4.1`)
+  - `cast port` (default `3000`)
+- In **Music** app, press `GO` to switch between local playback and CAST.
+- Cast mode polls `/api/cast/status` and sends `/api/cast/cmd` actions:
+  - `toggle`, `next`, `prev`, `play`, `pause`
+- MVP API contract for this integration has no required auth token.
+- In cast view, `Track ID` and `Err` lines are shown for quick diagnostics.
+
+For endpoint contract and request examples see
+[docs/cardputer-cast-integration.md](docs/cardputer-cast-integration.md).
 
 ## HTML Artifacts For BrowserApp
 

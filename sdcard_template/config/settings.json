@@ -4,5 +4,7 @@
   "volume": 7,
   "shuffle": false,
   "timezoneOffsetMin": 60,
-  "webPin": ""
+  "webPin": "",
+  "castHost": "192.168.4.1",
+  "castPort": 3000
 }
