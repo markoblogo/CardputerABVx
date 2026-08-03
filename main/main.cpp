@@ -20,6 +20,7 @@
 #include <esp_app_desc.h>
 #include <esp_event.h>
 #include <esp_http_server.h>
+#include <esp_http_client.h>
 #include <esp_heap_caps.h>
 #include <esp_netif.h>
 #include <esp_random.h>
@@ -90,8 +91,13 @@ constexpr int READER_STREAM_LOOKAHEAD_LINES = READER_LINES_PER_PAGE + 1;
 constexpr int SPEED_WPM_MIN = 350;
 constexpr int SPEED_WPM_MAX = 1000;
 constexpr int SPEED_WPM_STEP = 50;
+constexpr uint32_t CAST_REQUEST_TIMEOUT_MS = 1500;
+constexpr int CAST_MAX_HOST = 63;
+constexpr size_t CAST_MAX_TRACE_LINE = 64;
 constexpr uint32_t DEBOUNCE_MS = 180;
 constexpr float PI = 3.14159265358979323846f;
+
+bool isCastHostChar(char c);
 
 Adafruit_TCA8418 keyboard;
 sdmmc_card_t* sd_card = nullptr;
@@ -117,6 +123,20 @@ int connection_time_pending_offset_min = 0;
 uint64_t connection_time_last_epoch = 0;
 int connection_time_last_offset_min = 0;
 bool connection_time_sync_applied = false;
+char cast_host[CAST_MAX_HOST + 1] = "192.168.4.1";
+uint16_t cast_port = 8080;
+bool cast_trace_enabled = true;
+char cast_last_endpoint[48] = "-";
+char cast_last_path[96] = "-";
+char cast_last_error[64] = "none";
+uint16_t cast_last_code = 0;
+uint16_t cast_last_latency_ms = 0;
+uint16_t cast_last_status_ms = 0;
+bool cast_last_ok = false;
+uint32_t cast_retries_total = 0;
+bool settings_cast_editing = false;
+bool settings_cast_edit_host = false;
+std::string settings_cast_edit_buffer;
 
 enum class ConnectionUploadOp { None, Begin, Chunk, Finish, Abort };
 SemaphoreHandle_t connection_upload_mutex = nullptr;
@@ -657,6 +677,46 @@ void setTimeoutByName(const std::string& value)
     else timeout_mode = TimeoutMode::Normal;
 }
 
+void setCastHost(const std::string& host)
+{
+    if (host.empty()) return;
+    std::string clean;
+    for (char c : host) {
+        if (std::isspace(static_cast<unsigned char>(c)) || c == '/' || c == '\\') continue;
+        if (isCastHostChar(c)) clean.push_back(c);
+    }
+    if (clean.empty()) return;
+    if (clean.size() > CAST_MAX_HOST) clean = clean.substr(0, CAST_MAX_HOST);
+    snprintf(cast_host, sizeof(cast_host), "%s", clean.c_str());
+}
+
+void setCastPortFromName(const std::string& value)
+{
+    int parsed = std::atoi(value.c_str());
+    if (parsed <= 0 || parsed > 65535) return;
+    cast_port = static_cast<uint16_t>(parsed);
+}
+
+bool isCastHostChar(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           c == '.' || c == ':' || c == '-' || c == '_' ;
+}
+
+void setCastTrace(const char* endpoint, const char* path, bool ok, uint16_t code, uint16_t latency_ms, const char* err = nullptr)
+{
+    if (endpoint && endpoint[0]) snprintf(cast_last_endpoint, sizeof(cast_last_endpoint), "%s", endpoint);
+    else snprintf(cast_last_endpoint, sizeof(cast_last_endpoint), "-");
+    if (path && path[0]) snprintf(cast_last_path, sizeof(cast_last_path), "%s", path);
+    else snprintf(cast_last_path, sizeof(cast_last_path), "-");
+    cast_last_code = code;
+    cast_last_latency_ms = latency_ms;
+    cast_last_status_ms = static_cast<uint16_t>(M5.millis() & 0xFFFF);
+    cast_last_ok = ok;
+    if (err && err[0]) snprintf(cast_last_error, sizeof(cast_last_error), "%s", err);
+    else snprintf(cast_last_error, sizeof(cast_last_error), ok ? "none" : "error");
+}
+
 bool ensureConfigDir()
 {
     if (!initSd()) {
@@ -684,6 +744,9 @@ void saveConfig()
     fprintf(f, "SOUND=%s\n", soundName());
     fprintf(f, "TIMEOUT=%s\n", timeoutName());
     fprintf(f, "POWER=%d\n", power_save ? 1 : 0);
+    fprintf(f, "CAST_HOST=%s\n", cast_host);
+    fprintf(f, "CAST_PORT=%u\n", static_cast<unsigned int>(cast_port));
+    fprintf(f, "CAST_TRACE=%d\n", cast_trace_enabled ? 1 : 0);
     if (!flushAndClose(f)) {
         config_status = "RAM";
         return;
@@ -708,6 +771,9 @@ void loadConfig()
         else if (s.rfind("SOUND=", 0) == 0) setSoundByName(s.substr(6));
         else if (s.rfind("TIMEOUT=", 0) == 0) setTimeoutByName(s.substr(8));
         else if (s.rfind("POWER=", 0) == 0) power_save = s.substr(6) == "1";
+        else if (s.rfind("CAST_HOST=", 0) == 0) setCastHost(s.substr(10));
+        else if (s.rfind("CAST_PORT=", 0) == 0) setCastPortFromName(s.substr(10));
+        else if (s.rfind("CAST_TRACE=", 0) == 0) cast_trace_enabled = s.substr(11) == "1";
     }
     fclose(f);
     applyPowerSavePreset();
@@ -5635,24 +5701,46 @@ bool openFileEntry(const FileEntry& e, std::string* err = nullptr)
 
 void drawSettings()
 {
-    constexpr int settings_count = 7;
     canvas.fillScreen(uiBg());
     canvas.setTextSize(2);
     canvas.setTextColor(uiFg(), uiBg());
     canvas.setCursor(8, 8);
     canvas.print("SETTINGS");
     int start = std::max(0, settings_cursor - 1);
+    constexpr int settings_count = 9;
     start = std::min(start, std::max(0, settings_count - 3));
     for (int i = start; i < std::min(settings_count, start + 3); ++i) {
         canvas.setCursor(8, 34 + (i - start) * 23);
-        canvas.setTextColor(i == settings_cursor ? uiBg() : uiFg(), i == settings_cursor ? uiFg() : uiBg());
-        if (i == 0) canvas.printf("%c THEME %s", i == settings_cursor ? '>' : ' ', themeName());
-        else if (i == 1) canvas.printf("%c SOUND %s", i == settings_cursor ? '>' : ' ', soundName());
-        else if (i == 2) canvas.printf("%c TIMEOUT %s", i == settings_cursor ? '>' : ' ', timeoutName());
-        else if (i == 3) canvas.printf("%c POWER %s", i == settings_cursor ? '>' : ' ', power_save ? "ON" : "OFF");
-        else if (i == 4) canvas.printf("%c SD REPROBE", i == settings_cursor ? '>' : ' ');
-        else if (i == 5) canvas.printf("%c ABOUT", i == settings_cursor ? '>' : ' ');
-        else canvas.printf("%c CONNECTIONS", i == settings_cursor ? '>' : ' ');
+        const bool edit_row = settings_cast_editing && (
+            (settings_cast_edit_host && i == 4) ||
+            (!settings_cast_edit_host && i == 5));
+        const bool sel = i == settings_cursor;
+        canvas.setTextColor(sel ? uiBg() : uiFg(), sel ? uiFg() : uiBg());
+        if (i == 0) canvas.printf("%c THEME %s", sel ? '>' : ' ', themeName());
+        else if (i == 1) canvas.printf("%c SOUND %s", sel ? '>' : ' ', soundName());
+        else if (i == 2) canvas.printf("%c TIMEOUT %s", sel ? '>' : ' ', timeoutName());
+        else if (i == 3) canvas.printf("%c POWER %s", sel ? '>' : ' ', power_save ? "ON" : "OFF");
+        else if (i == 4) {
+            const char* value = (sel && settings_cast_editing && settings_cast_edit_host) ? settings_cast_edit_buffer.c_str() : cast_host;
+            canvas.printf("%c CAST HOST %s", sel ? '>' : ' ', value);
+        } else if (i == 5) {
+            char port_value[16];
+            snprintf(port_value, sizeof(port_value), "%u", static_cast<unsigned int>(cast_port));
+            const char* value = (sel && settings_cast_editing && !settings_cast_edit_host) ? settings_cast_edit_buffer.c_str() : port_value;
+            if (i == 5 && settings_cast_editing && sel && !settings_cast_edit_host) {
+                canvas.printf("%c CAST PORT %s", sel ? '>' : ' ', value);
+            } else {
+                canvas.printf("%c CAST PORT %u", sel ? '>' : ' ', static_cast<unsigned int>(cast_port));
+            }
+        } else if (i == 6) canvas.printf("%c SD REPROBE", sel ? '>' : ' ');
+        else if (i == 7) canvas.printf("%c ABOUT", sel ? '>' : ' ');
+        else if (i == 8) canvas.printf("%c CONNECTIONS", sel ? '>' : ' ');
+        if (edit_row) {
+            canvas.setTextColor(uiDim(), uiBg());
+            canvas.setCursor(8, 106);
+            canvas.print("type text, OK to save");
+            break;
+        }
     }
     canvas.setTextSize(1);
     canvas.setTextColor(uiDim(), uiBg());
@@ -5668,7 +5756,8 @@ void drawSettings()
     if (level >= 0) canvas.printf("BAT %d%% PASS %s", level, connection_ap_password);
     else canvas.printf("BAT -- V%d PASS %s", battery_last_mv, connection_ap_password);
     canvas.setCursor(8, 122);
-    canvas.print("OK OPEN/CHANGE       GO BACK");
+    if (settings_cast_editing) canvas.print("OK SAVE    BS DELETE    GO BACK");
+    else canvas.print("OK OPEN/CHANGE       GO BACK");
     canvas.pushSprite(0, 0);
 }
 
@@ -5932,6 +6021,129 @@ void sendHttpError(httpd_req_t* req, const char* endpoint, const char* reason, h
     httpd_resp_send_err(req, code, reason);
 }
 
+bool requestCastEndpoint(esp_http_client_method_t method, const char* path, std::string* response, std::string* err)
+{
+    if (!cast_trace_enabled) cast_retries_total = 0;
+    if (!cast_host[0] || !cast_port) {
+        if (err) *err = "cast host/port unset";
+        setCastTrace("NONE", path ? path : "-", false, 0, 0, err ? err->c_str() : "cast host/port unset");
+        return false;
+    }
+    std::string full_path = (path && path[0]) ? std::string(path) : std::string("/");
+    if (!full_path.empty() && full_path[0] != '/') full_path.insert(0, 1, '/');
+    char url[160] = {};
+    const char* host = cast_host;
+    if (!host[0]) host = "192.168.4.1";
+    if (snprintf(url, sizeof(url), "http://%s:%u%s", host, static_cast<unsigned int>(cast_port), full_path.c_str()) >= static_cast<int>(sizeof(url))) {
+        if (err) *err = "url too long";
+        setCastTrace("URL", full_path.c_str(), false, 0, 0, "url too long");
+        return false;
+    }
+    int tries = 0;
+    while (tries < 3) {
+        uint32_t start_ms = M5.millis();
+        esp_http_client_config_t cfg = {};
+        cfg.url = url;
+        cfg.method = method;
+        cfg.timeout_ms = CAST_REQUEST_TIMEOUT_MS;
+        cfg.skip_cert_common_name_check = true;
+        esp_http_client_handle_t client = esp_http_client_init(&cfg);
+        if (!client) {
+            if (err) *err = "http init";
+            setCastTrace(full_path.c_str(), full_path.c_str(), false, 0, 0, "http init failed");
+            return false;
+        }
+        ++cast_retries_total;
+        esp_err_t rc = esp_http_client_perform(client);
+        int code = rc == ESP_OK ? esp_http_client_get_status_code(client) : 0;
+        uint16_t lat = static_cast<uint16_t>(M5.millis() - start_ms);
+        if (rc == ESP_OK && code >= 200 && code < 300) {
+            if (response) {
+                response->clear();
+                char buf[128];
+                int total = 0;
+                while (true) {
+                    int got = esp_http_client_read(client, buf, static_cast<int>(sizeof(buf) - 1));
+                    if (got <= 0) break;
+                    buf[got] = 0;
+                    total += got;
+                    if (response->size() < CAST_MAX_TRACE_LINE) {
+                        size_t room = CAST_MAX_TRACE_LINE - response->size();
+                        response->append(buf, static_cast<size_t>(std::min(room, static_cast<size_t>(got))));
+                    }
+                    if (total > 8192) break;
+                }
+            }
+            setCastTrace(full_path.c_str(), full_path.c_str(), true, static_cast<uint16_t>(code), lat, "none");
+            esp_http_client_cleanup(client);
+            if (err) err->clear();
+            return true;
+        }
+        if (err) *err = rc == ESP_OK ? "http error" : esp_err_to_name(rc);
+        setCastTrace(full_path.c_str(), full_path.c_str(), false, static_cast<uint16_t>(code), lat, err ? err->c_str() : "failed");
+        esp_http_client_cleanup(client);
+        vTaskDelay(pdMS_TO_TICKS(150 + tries * 120));
+        ++tries;
+    }
+    return false;
+}
+
+[[maybe_unused]] bool requestCastEndpoint(const char* path, std::string* response, std::string* err)
+{
+    return requestCastEndpoint(HTTP_METHOD_GET, path, response, err);
+}
+
+bool requestCastPathWithCompat(esp_http_client_method_t method, const char* primary, const char* fallback, std::string* response, std::string* err)
+{
+    if (requestCastEndpoint(method, primary, response, err)) return true;
+    if (fallback && requestCastEndpoint(method, fallback, response, err)) return true;
+    return false;
+}
+
+esp_err_t connectionCastStatusHandler(httpd_req_t* req)
+{
+    ++connection_req_count;
+    const char* endpoint = "/api/cast/status";
+    std::string response;
+    std::string err;
+    if (!requestCastPathWithCompat(HTTP_METHOD_GET, "/api/cast/status", "/cast/status", &response, &err)) {
+        sendHttpError(req, endpoint, err.empty() ? "cast status" : err.c_str(), HTTPD_500_INTERNAL_SERVER_ERROR);
+        return ESP_OK;
+    }
+    setConnectionStatus(endpoint, "none");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, response.empty() ? "OK CAST STATUS\n" : response.c_str());
+}
+
+esp_err_t connectionCastActionHandler(httpd_req_t* req, const char* endpoint, const char* primary, const char* fallback)
+{
+    ++connection_req_count;
+    std::string response;
+    std::string err;
+    if (!requestCastPathWithCompat(HTTP_METHOD_POST, primary, fallback, &response, &err)) {
+        sendHttpError(req, endpoint, err.empty() ? "cast action" : err.c_str(), HTTPD_500_INTERNAL_SERVER_ERROR);
+        return ESP_OK;
+    }
+    setConnectionStatus(endpoint, "none");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, response.empty() ? "OK CAST\n" : response.c_str());
+}
+
+esp_err_t connectionCastPlayHandler(httpd_req_t* req)
+{
+    return connectionCastActionHandler(req, "/api/cast/play", "/api/cast/play", "/cast/play");
+}
+
+esp_err_t connectionCastNextHandler(httpd_req_t* req)
+{
+    return connectionCastActionHandler(req, "/api/cast/next", "/api/cast/next", "/cast/next");
+}
+
+esp_err_t connectionCastPrevHandler(httpd_req_t* req)
+{
+    return connectionCastActionHandler(req, "/api/cast/prev", "/api/cast/prev", "/cast/prev");
+}
+
 void cleanupUploadSession(bool remove_partial)
 {
     if (connection_upload_file) {
@@ -5953,7 +6165,7 @@ void cleanupUploadSession(bool remove_partial)
     connection_upload_last_activity_ms = 0;
 }
 
-void resetUploadSession(bool remove_partial)
+[[maybe_unused]] void resetUploadSession(bool remove_partial)
 {
     cleanupUploadSession(remove_partial);
     connection_pending_op = ConnectionUploadOp::None;
@@ -6303,16 +6515,20 @@ esp_err_t connectionStatusHandler(httpd_req_t* req)
     time_offset = connection_time_last_offset_min;
     portEXIT_CRITICAL(&connection_time_mux);
     const char* time_state = time_pending ? "PENDING" : (time_applied ? "APPLIED" : "NONE");
-    char body[448];
+    char body[640];
     snprintf(body, sizeof(body),
-             "OK STATUS\nap=%s\nhttp=%s\nreq=%d\nlast=%s\nerr=%s\nupload=%s\npath=%s\ndone=%d\ntotal=%d\ntime=%s\nepoch=%llu\noffset=%d\nclock=%lu\n",
+             "OK STATUS\nap=%s\nhttp=%s\nreq=%d\nlast=%s\nerr=%s\nupload=%s\npath=%s\ndone=%d\ntotal=%d\n"
+             "time=%s\nepoch=%llu\noffset=%d\nclock=%lu\n"
+             "cast=%s:%u\ncast_trace=%s|%s|%u|%ums|%d\ncast_retries=%lu\n",
              connection_wifi_on ? "ON" : "OFF",
              connection_http_on ? "ON" : "OFF",
              connection_req_count,
              connection_last_endpoint, connection_last_error,
              upload_state, upload_path, connection_upload_done, connection_upload_total,
              time_state, static_cast<unsigned long long>(time_epoch), time_offset,
-             static_cast<unsigned long>(elapsedClockSeconds() % 86400));
+             static_cast<unsigned long>(elapsedClockSeconds() % 86400),
+             cast_host, static_cast<unsigned int>(cast_port), cast_last_endpoint,
+             cast_last_path, cast_last_code, cast_last_latency_ms, cast_last_ok ? 1 : 0, static_cast<unsigned long>(cast_retries_total));
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, body);
 }
@@ -6758,9 +6974,9 @@ bool startConnectionHttp(char* err, size_t err_len)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
     config.lru_purge_enable = true;
-    // Default ESP-IDF HTTP server handler limit is too small for the
-    // Connections API once chunked upload endpoints are registered.
-    config.max_uri_handlers = 16;
+    // Default ESP-IDF HTTP server handler limit is too small for cast endpoints
+    // plus staged upload handlers.
+    config.max_uri_handlers = 24;
     esp_err_t rc = httpd_start(&connection_httpd, &config);
     if (rc != ESP_OK) {
         snprintf(err, err_len, "http %s", esp_err_to_name(rc));
@@ -6797,6 +7013,10 @@ bool startConnectionHttp(char* err, size_t err_len)
     if (!reg("/api/upload-chunk", HTTP_POST, connectionUploadChunkHandler)) return false;
     if (!reg("/api/upload-finish", HTTP_POST, connectionUploadFinishHandler)) return false;
     if (!reg("/api/upload-abort", HTTP_POST, connectionUploadAbortHandler)) return false;
+    if (!reg("/api/cast/status", HTTP_GET, connectionCastStatusHandler)) return false;
+    if (!reg("/api/cast/play", HTTP_POST, connectionCastPlayHandler)) return false;
+    if (!reg("/api/cast/next", HTTP_POST, connectionCastNextHandler)) return false;
+    if (!reg("/api/cast/prev", HTTP_POST, connectionCastPrevHandler)) return false;
     connection_http_on = true;
     return true;
 }
@@ -6893,19 +7113,24 @@ void drawConnections()
         canvas.printf("PASS %s", connection_ap_password);
         canvas.setCursor(8, 82);
         canvas.print("URL  192.168.4.1");
+        canvas.setCursor(8, 94);
+        canvas.printf("CAST %s:%u", cast_host, static_cast<unsigned int>(cast_port));
+        canvas.setCursor(8, 104);
         canvas.setTextColor(uiAccent(), uiBg());
-        canvas.setCursor(8, 96);
-        canvas.print("LIST/DOWNLOAD OK");
+        canvas.printf("%s %u %s", cast_last_ok ? "OK" : "FAIL", cast_last_code, cast_last_error);
+        canvas.setTextColor(uiAccent(), uiBg());
+        canvas.setCursor(8, 114);
+        canvas.printf("LAST %s", cast_last_path);
         canvas.setTextColor(uiDim(), uiBg());
-        canvas.setCursor(8, 108);
+        canvas.setCursor(8, 122);
         if (connection_upload_active) {
             canvas.printf("UPLOAD %d/%d", connection_upload_done, connection_upload_total);
         } else {
             canvas.print("STAGED UPLOAD READY");
         }
         canvas.setTextColor(uiDim(), uiBg());
-        canvas.setCursor(8, 122);
-        canvas.print("OK STATUS           GO STOP");
+        canvas.setCursor(8, 126);
+        canvas.print("OK STATUS            GO STOP");
         canvas.pushSprite(0, 0);
         return;
     }
@@ -6918,13 +7143,15 @@ void drawConnections()
     canvas.print("OK START");
     canvas.setCursor(8, 84);
     canvas.print("List/download files");
-    canvas.setTextSize(1);
-    canvas.setTextColor(uiDim(), uiBg());
-    canvas.setCursor(8, 106);
-    canvas.print("Staged upload v3");
-    canvas.setCursor(8, 122);
-    canvas.print("OK START         GO BACK");
-    canvas.pushSprite(0, 0);
+        canvas.setTextSize(1);
+        canvas.setTextColor(uiDim(), uiBg());
+        canvas.setCursor(8, 106);
+        canvas.print("Staged upload v3");
+        canvas.setCursor(8, 112);
+        canvas.print("CAST API READY");
+        canvas.setCursor(8, 124);
+        canvas.print("OK START         GO BACK");
+        canvas.pushSprite(0, 0);
 }
 
 void drawMessage()
@@ -7979,8 +8206,46 @@ void handleKey(KeyEvent ev)
     }
 
     if (screen == Screen::Settings) {
+        if (settings_cast_editing) {
+            if (ev.key == Key::Back || ev.key == Key::Home) {
+                settings_cast_editing = false;
+                settings_cast_edit_buffer.clear();
+                blockInput(220);
+            } else if (ev.key == Key::Ok) {
+                if (settings_cast_edit_host) {
+                    if (!settings_cast_edit_buffer.empty()) setCastHost(settings_cast_edit_buffer);
+                    saveConfig();
+                } else {
+                    int parsed = settings_cast_edit_buffer.empty() ? static_cast<int>(cast_port) : std::atoi(settings_cast_edit_buffer.c_str());
+                    if (parsed > 0 && parsed <= 65535) {
+                        cast_port = static_cast<uint16_t>(parsed);
+                        saveConfig();
+                    } else {
+                        showMessage("CAST PORT", "bad value");
+                    }
+                }
+                settings_cast_editing = false;
+                settings_cast_edit_buffer.clear();
+                blockInput(220);
+            } else if (ev.key == Key::Backspace) {
+                if (!settings_cast_edit_buffer.empty()) settings_cast_edit_buffer.pop_back();
+                blockInput(120);
+            } else if (ev.key == Key::None && ev.name && ev.name[0] && !ev.name[1]) {
+                char c = ev.name[0];
+                if (settings_cast_edit_host) {
+                    if (isCastHostChar(c) && settings_cast_edit_buffer.size() < CAST_MAX_HOST) {
+                        settings_cast_edit_buffer.push_back(c);
+                    }
+                } else if (std::isdigit(static_cast<unsigned char>(c)) && settings_cast_edit_buffer.size() < 5) {
+                    settings_cast_edit_buffer.push_back(c);
+                }
+                blockInput(80);
+            }
+            dirty = true;
+            return;
+        }
         if (ev.key == Key::Up) settings_cursor = std::max(0, settings_cursor - 1);
-        else if (ev.key == Key::Down) settings_cursor = std::min(6, settings_cursor + 1);
+        else if (ev.key == Key::Down) settings_cursor = std::min(8, settings_cursor + 1);
         else if (ev.key == Key::Left || ev.key == Key::Right || ev.key == Key::Ok) {
             int dir = ev.key == Key::Left ? -1 : 1;
             if (settings_cursor == 0) {
@@ -7996,6 +8261,14 @@ void handleKey(KeyEvent ev)
                 power_save = !power_save;
                 applyPowerSavePreset();
             } else if (settings_cursor == 4 && ev.key == Key::Ok) {
+                settings_cast_editing = true;
+                settings_cast_edit_host = true;
+                settings_cast_edit_buffer = cast_host;
+            } else if (settings_cursor == 5 && ev.key == Key::Ok) {
+                settings_cast_editing = true;
+                settings_cast_edit_host = false;
+                settings_cast_edit_buffer = std::to_string(static_cast<int>(cast_port));
+            } else if (settings_cursor == 6 && ev.key == Key::Ok) {
                 uint64_t total = 0;
                 uint64_t free_b = 0;
                 bool ok = manualSdReprobe() && sdUsage(&total, &free_b) && total >= free_b;
@@ -8004,7 +8277,7 @@ void handleKey(KeyEvent ev)
                 } else {
                     showMessage("SD REPROBE", "SD not ready");
                 }
-            } else if (settings_cursor == 5 && ev.key == Key::Ok) {
+            } else if (settings_cursor == 7 && ev.key == Key::Ok) {
                 const esp_app_desc_t* app = esp_app_get_description();
                 char buf[160];
                 snprintf(buf, sizeof(buf), "Pocket OS v%s\nBUILD %s\nPASS %s",
@@ -8012,10 +8285,11 @@ void handleKey(KeyEvent ev)
                          app ? app->date : __DATE__,
                          connection_ap_password);
                 showMessage("ABOUT", buf);
-            } else if (settings_cursor == 6 && ev.key == Key::Ok) {
+            } else if (settings_cursor == 8 && ev.key == Key::Ok) {
                 screen = Screen::Connections;
             }
-            if (settings_cursor < 4) saveConfig();
+            if (settings_cursor >= 0 && settings_cursor <= 3) saveConfig();
+            if (settings_cursor == 4 || settings_cursor == 5) saveConfig();
             blockInput(220);
         } else if (ev.key == Key::Home || ev.key == Key::Back) {
             screen = Screen::Launcher;
