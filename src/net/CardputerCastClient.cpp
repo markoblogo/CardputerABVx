@@ -8,6 +8,59 @@
 CardputerCastClient::CardputerCastClient(String host, uint16_t port)
   : host_(host), port_(port) {}
 
+CardputerCastClient::DebugSnapshot CardputerCastClient::latestDebugTrace_ = {};
+
+CardputerCastClient::DebugSnapshot CardputerCastClient::latestDebugTrace() {
+  return latestDebugTrace_;
+}
+
+String CardputerCastClient::lastDebugPath() {
+  return latestDebugTrace_.path;
+}
+
+int CardputerCastClient::lastDebugStatusCode() {
+  return latestDebugTrace_.statusCode;
+}
+
+uint8_t CardputerCastClient::lastDebugAttemptCount() {
+  return latestDebugTrace_.attemptCount;
+}
+
+uint16_t CardputerCastClient::lastDebugLatencyMs() {
+  return latestDebugTrace_.latencyMs;
+}
+
+bool CardputerCastClient::lastDebugSuccess() {
+  return latestDebugTrace_.success;
+}
+
+String CardputerCastClient::lastDebugError() {
+  return latestDebugTrace_.error;
+}
+
+String CardputerCastClient::endpointForDebug(const String& host, uint16_t port) {
+  const String endpointHost = host.length() ? host : String("192.168.4.1");
+  return endpointHost + ":" + String(port ? port : 3000);
+}
+
+void CardputerCastClient::recordGlobalTrace(
+  const String& host,
+  const String& path,
+  int statusCode,
+  uint8_t attempts,
+  uint16_t latencyMs,
+  bool success,
+  const String& error
+) {
+  latestDebugTrace_.host = host.length() ? host : endpointForDebug(String("192.168.4.1"), 3000);
+  latestDebugTrace_.path = path;
+  latestDebugTrace_.statusCode = statusCode;
+  latestDebugTrace_.attemptCount = attempts;
+  latestDebugTrace_.latencyMs = latencyMs;
+  latestDebugTrace_.success = success;
+  latestDebugTrace_.error = error.length() ? error : String(success ? "ok" : "error");
+}
+
 void CardputerCastClient::setEndpoint(String host, uint16_t port) {
   host_ = host;
   port_ = port;
@@ -40,6 +93,7 @@ bool CardputerCastClient::requestJson(
     code = 0;
     lastError_ = err;
     lastLatencyMs_ = static_cast<uint16_t>(min<uint32_t>(millis() - startedMs, 65535));
+    recordGlobalTrace(endpointForDebug(host_, port_), path, code, lastAttemptCount_, lastLatencyMs_, false, lastError_);
     return false;
   }
   http.setTimeout(timeoutMs);
@@ -51,9 +105,13 @@ bool CardputerCastClient::requestJson(
     err = "request failed";
     lastError_ = err;
     lastLatencyMs_ = static_cast<uint16_t>(min<uint32_t>(millis() - startedMs, 65535));
+    recordGlobalTrace(endpointForDebug(host_, port_), path, code, lastAttemptCount_, lastLatencyMs_, false, lastError_);
     return false;
   }
   lastLatencyMs_ = static_cast<uint16_t>(min<uint32_t>(millis() - startedMs, 65535));
+  if (code >= 200 && code < 300) {
+    recordGlobalTrace(endpointForDebug(host_, port_), path, code, lastAttemptCount_, lastLatencyMs_, true, "ok");
+  }
   return true;
 }
 
@@ -228,8 +286,10 @@ bool CardputerCastClient::getStatus(CardputerCastStatus& out) {
   String response;
   int code = 0;
   String err;
-  const uint8_t attempts = 2;
+  const uint8_t attempts = 4;
   const int timeoutMs = 1500;
+  const uint16_t baseDelayMs = 90;
+  const uint16_t maxDelayMs = 720;
   lastLatencyMs_ = 0;
   lastAttemptCount_ = 0;
   lastError_.remove(0);
@@ -237,30 +297,40 @@ bool CardputerCastClient::getStatus(CardputerCastStatus& out) {
   lastPath_.remove(0);
 
   const String paths[] = { "/api/cast/status", "/cast/status", "/status" };
+  String endpointSummary;
   for (uint8_t i = 0; i < 3; ++i) {
     const String path = paths[i];
+    String pathSummary;
     for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
       if (requestJson(path, false, String(), timeoutMs, response, code, err) && code >= 200 && code < 300) {
         lastStatusCode_ = code;
         lastPath_ = path;
         if (parseStatus(response, out)) {
           lastError_ = err;
+          recordGlobalTrace(endpointForDebug(host_, port_), path, code, lastAttemptCount_, lastLatencyMs_, true, err.length() ? err : "ok");
           return true;
         }
       }
+      String reason = err.length() ? err : "status_parse_failed";
+      recordGlobalTrace(endpointForDebug(host_, port_), path, code, lastAttemptCount_, lastLatencyMs_, false, reason);
+      pathSummary += String("a") + String(attempt + 1) + String("=") + String(code) + ":" + reason + " ";
       if (code) {
         lastStatusCode_ = code;
       }
       if (attempt + 1 < attempts) {
-        delay(90);
+        const uint16_t delayMs = min<uint16_t>(maxDelayMs, baseDelayMs << attempt);
+        delay(delayMs);
       }
     }
+    if (pathSummary.length()) endpointSummary += path + ": " + pathSummary;
   }
 
   out.connected = false;
   out.ok = false;
-  out.error = err.length() ? err : String("request_failed_") + String(code);
+  out.error = endpointSummary.length() ? endpointSummary : String("request_failed_") + String(code);
+  if (!endpointSummary.length() && err.length()) out.error = err;
   lastError_ = out.error;
+  recordGlobalTrace(endpointForDebug(host_, port_), lastPath_, code, lastAttemptCount_, lastLatencyMs_, false, out.error);
   return false;
 }
 
@@ -269,8 +339,10 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
   String response;
   int code = 0;
   String err;
-  const uint8_t attempts = 2;
+  const uint8_t attempts = 4;
   const int timeoutMs = 1500;
+  const uint16_t baseDelayMs = 90;
+  const uint16_t maxDelayMs = 720;
   lastLatencyMs_ = 0;
   lastAttemptCount_ = 0;
   lastError_.remove(0);
@@ -278,6 +350,8 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
   lastPath_.remove(0);
 
   const String apiPath = "/api/cast/cmd";
+  String endpointSummary;
+  String cmdSummary;
   for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
     lastPath_ = apiPath;
     if (requestJson(apiPath, true, bodyToSend, timeoutMs, response, code, err) && code >= 200 && code < 300) {
@@ -285,17 +359,24 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
       lastPath_ = apiPath;
       if (responseStatus) parseStatus(response, *responseStatus);
       lastError_ = err;
+      recordGlobalTrace(endpointForDebug(host_, port_), apiPath, code, lastAttemptCount_, lastLatencyMs_, true, String(err.length() ? err : "ok"));
       return true;
     }
+    String reason = err.length() ? err : "command_failed";
+    recordGlobalTrace(endpointForDebug(host_, port_), apiPath, code, lastAttemptCount_, lastLatencyMs_, false, reason);
+    cmdSummary += String("a") + String(attempt + 1) + String("=") + String(code) + ":" + reason + " ";
     if (code) {
       lastStatusCode_ = code;
     }
     if (attempt + 1 < attempts) {
-      delay(90);
+      const uint16_t delayMs = min<uint16_t>(maxDelayMs, baseDelayMs << attempt);
+      delay(delayMs);
     }
   }
+  if (cmdSummary.length()) endpointSummary += apiPath + ": " + cmdSummary;
 
   const String legacyPath = String("/cast/") + action;
+  String castSummary;
   for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
     lastPath_ = legacyPath;
     if (requestJson(legacyPath, false, String(), timeoutMs, response, code, err) && code >= 200 && code < 300) {
@@ -313,17 +394,24 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
           responseStatus->raw = response.length() ? response : String("{\"ok\":true}");
         }
       }
+      recordGlobalTrace(endpointForDebug(host_, port_), legacyPath, code, lastAttemptCount_, lastLatencyMs_, true, String("ok"));
       return true;
     }
-    if (code) {
-      lastStatusCode_ = code;
-    }
+      recordGlobalTrace(endpointForDebug(host_, port_), legacyPath, code, lastAttemptCount_, lastLatencyMs_, false, err.length() ? err : "fallback_command_failed");
+      String reason = err.length() ? err : "fallback_command_failed";
+      castSummary += String("a") + String(attempt + 1) + String("=") + String(code) + ":" + reason + " ";
+      if (code) {
+        lastStatusCode_ = code;
+      }
     if (attempt + 1 < attempts) {
-      delay(90);
+      const uint16_t delayMs = min<uint16_t>(maxDelayMs, baseDelayMs << attempt);
+      delay(delayMs);
     }
   }
+  if (castSummary.length()) endpointSummary += String(" ") + legacyPath + ": " + castSummary;
   if (responseStatus) {
     if (getStatus(*responseStatus)) {
+      recordGlobalTrace(endpointForDebug(host_, port_), lastPath_, lastStatusCode_, lastAttemptCount_, lastLatencyMs_, true, String("ok-fallback"));
       return true;
     }
   }
@@ -339,18 +427,26 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
       if (responseStatus) {
         *responseStatus = fallback;
       }
+      recordGlobalTrace(endpointForDebug(host_, port_), legacyStatusPath, code, lastAttemptCount_, lastLatencyMs_, true, String("ok-fallback"));
       return true;
     }
-    if (code) {
-      lastStatusCode_ = code;
+      recordGlobalTrace(endpointForDebug(host_, port_), legacyStatusPath, code, lastAttemptCount_, lastLatencyMs_, false, err.length() ? err : "fallback_status_failed");
+      String reason = err.length() ? err : "fallback_status_failed";
+      endpointSummary += String(" ") + legacyStatusPath + ": " + String("a") + String(attempt + 1) + String("=") + String(code) + ":" + reason;
+      if (code) {
+        lastStatusCode_ = code;
+      }
+    if (attempt + 1 < attempts) {
+      const uint16_t delayMs = min<uint16_t>(maxDelayMs, baseDelayMs << attempt);
+      delay(delayMs);
     }
-    if (attempt + 1 < attempts) delay(90);
   }
   if (responseStatus) {
     responseStatus->connected = false;
     responseStatus->ok = false;
-    responseStatus->error = err.length() ? err : String("request_failed_") + String(code);
+    responseStatus->error = endpointSummary.length() ? endpointSummary : (err.length() ? err : String("request_failed_") + String(code));
   }
   lastError_ = err.length() ? err : responseStatus ? responseStatus->error : String("request_failed_") + String(code);
+  recordGlobalTrace(endpointForDebug(host_, port_), lastPath_, lastStatusCode_, lastAttemptCount_, lastLatencyMs_, false, lastError_);
   return false;
 }

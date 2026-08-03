@@ -1,6 +1,7 @@
 # Cardputer Cast integration with YTMamp
 
 The Cardputer Music app can control playback on a desktop YTMamp instance over LAN.
+Desktop endpoint project: [markoblogo/YTMamp](https://github.com/markoblogo/YTMamp)
 
 ## Why it exists
 
@@ -147,12 +148,12 @@ On success response returns updated state in the same format as status endpoint.
 ## Retry/timeout policy
 
 - request timeout: `1500 ms`
-- attempts: `2` per endpoint
-- short inter-attempt delay: `90 ms`
+- attempts: `4` per endpoint
+- exponential inter-attempt delays: `90`, `180`, `360`, `720` ms
 - fallback endpoints as above when API path differs
 - client retry budget in app is also applied by UI polling cooldown:
   - normal poll cadence: `~1500 ms`
-  - soft backoff after failures: `120/700/1000 ms` with longer fallbacks on repeated errors
+  - soft backoff after failures: per-endpoint attempts first, then endpoint fallback
 
 ## Diagnostics in UI
 
@@ -163,8 +164,30 @@ In CAST mode, **Music** screen shows:
   - `on/off`
   - attempt count
   - last RTT in ms
+In CAST mode, `TXT+T` opens a cast trace page with:
+  - `Path`
+  - `Code`
+  - `Attempts`
+  - `RTT`
+  - `State`
+  - `Last status`
 
-These lines are useful to quickly check whether YTMamp endpoint responds correctly and which track it currently tracks.
+`Network` app shows global trace and debug:
+- one-line trace:
+  - `Trace: <host:port/path> ok|err c<code> a<attempts> t<ms>ms`
+- `TXT+T` in Network opens **Cast Trace Detail** page:
+  - `Endpoint`
+  - `Path`
+  - `Code`
+  - `Attempts`
+  - `RTT`
+  - `Error`
+- `TXT+D` toggles cast debug persistence/logging.
+- trace log is throttled to 1 entry/sec.
+- endpoint failures are summarized per endpoint in trace error field.
+
+Example:
+`/api/cast/status: a1=500:request failed a2=500:request failed ...`
 
 ## Short device validation checklist
 
@@ -196,7 +219,6 @@ Use this sequence on Cardputer to validate that Cast integration works end-to-en
 - In **Network**, press `D` in normal mode to toggle `Cast Debug`.
   - when ON, settings will persist as `castDebug` in `/config/settings.json`.
   - line `Cast Debug` shows current mode.
-- In **Network**, press `D` in normal mode to toggle `Cast Debug`.
 - In **Music** CAST mode, extra diagnostic line is shown:
   - `DBG: <code> <path>`
   - `<code>` is HTTP status of last request.
@@ -207,7 +229,7 @@ Use this sequence on Cardputer to validate that Cast integration works end-to-en
   - `Attempts: <retry_count>`
   - `State: OFFLINE/PAUSE/PLAY`
   - `Last: <last local status message>`
-- Press `TXT:T` again to close trace.
-- Debug mode also writes compact notes to SD logs (max one line / second):
+- Press `TXT+T` again to close trace.
+- Debug mode writes compact notes to SD logs (max one line / second):
   - `cast cmd ...`
   - `cast status ...`

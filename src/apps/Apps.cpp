@@ -872,6 +872,31 @@ void NetworkApp::draw() {
     ctx_->ui->listItem(selectorRow + 1, String("Cast Port") + ((castSelection_ == static_cast<int>(scanCount_) + 1) ? " <-" : ""), castSelection_ == static_cast<int>(scanCount_) + 1);
   }
   ctx_->ui->line(15, String("Cast Debug: ") + (castDebug_ ? "ON" : "OFF"));
+  const CardputerCastClient::DebugSnapshot trace = CardputerCastClient::latestDebugTrace();
+  const String tracePrefix = String("Trace: ") + trace.host + trace.path;
+  const String traceStatus = trace.success ? " ok" : " err";
+  const String traceLine = tracePrefix + traceStatus +
+                          " c" + String(trace.statusCode) +
+                          " a" + String(trace.attemptCount) +
+                          " t" + String(trace.latencyMs) + "ms";
+  lastCastTrace_ = traceLine;
+  lastCastTraceErr_ = trace.error;
+  castTraceStatusAt_ = millis();
+  if (castTraceDetail_) {
+    ctx_->ui->line(2, "Cast Trace Detail");
+    ctx_->ui->line(4, String("Status: ") + (trace.success ? "OK" : "ERROR"));
+    ctx_->ui->line(5, String("Endpoint: ") + trace.host);
+    ctx_->ui->line(6, String("Path: ") + trace.path);
+    ctx_->ui->line(7, String("Code: ") + String(trace.statusCode));
+    ctx_->ui->line(8, String("Attempts: ") + String(trace.attemptCount));
+    ctx_->ui->line(9, String("RTT: ") + String(trace.latencyMs) + "ms");
+    if (lastCastTraceErr_.length()) ctx_->ui->line(10, String("Error: ") + lastCastTraceErr_, TerminalUI::Dim);
+    return;
+  }
+  if (lastCastTraceErr_.length()) {
+    ctx_->ui->line(13, String("TraceErr: ") + lastCastTraceErr_, TerminalUI::Dim);
+  }
+  ctx_->ui->line(14, lastCastTrace_, TerminalUI::Dim);
   if (castEditing_) {
     ctx_->ui->line(selectorRow + 3, String("Editing ") + (castEditHost_ ? "host" : "port"), TerminalUI::Yellow);
     ctx_->ui->line(selectorRow + 4, castEditor_.visibleLine(28), TerminalUI::White);
@@ -904,6 +929,11 @@ void NetworkApp::onInput(const InputEvent& e) {
       return;
     }
     castEditor_.onInput(e, false);
+    return;
+  }
+  if (e.action == InputAction::TextChar && (e.text == 't' || e.text == 'T')) {
+    castTraceDetail_ = !castTraceDetail_;
+    status_ = String("cast trace ") + (castTraceDetail_ ? "detail on" : "detail off");
     return;
   }
   if (e.action == InputAction::TextChar && (e.text == 'd' || e.text == 'D')) {

@@ -40,6 +40,23 @@ public:
   const String& lastError() const { return lastError_; }
   const String& lastPath() const { return lastPath_; }
   int lastStatusCode() const { return lastStatusCode_; }
+  struct DebugSnapshot {
+    String host;
+    String path;
+    int statusCode = 0;
+    uint8_t attemptCount = 0;
+    uint16_t latencyMs = 0;
+    bool success = false;
+    String error;
+  };
+
+  static DebugSnapshot latestDebugTrace();
+  static String lastDebugPath();
+  static int lastDebugStatusCode();
+  static uint8_t lastDebugAttemptCount();
+  static uint16_t lastDebugLatencyMs();
+  static bool lastDebugSuccess();
+  static String lastDebugError();
 
   bool getStatus(CardputerCastStatus& out);
   bool postCommand(const String& action, CardputerCastStatus* response = nullptr, const String& body = String());
@@ -68,4 +85,8 @@ private:
   String lastError_ = "";
   String lastPath_;
   int lastStatusCode_ = 0;
+  static void recordGlobalTrace(const String& host, const String& path, int statusCode, uint8_t attempts, uint16_t latencyMs, bool success, const String& error);
+  static String endpointHost(uint16_t port, const String& host);
+  static String endpointForDebug(const String& host, uint16_t port);
+  static DebugSnapshot latestDebugTrace_;
 };

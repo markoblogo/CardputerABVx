@@ -165,6 +165,7 @@ Config files:
 
 ## Cardputer + YTMamp Cast integration
 
+- Desktop companion project: [markoblogo/YTMamp](https://github.com/markoblogo/YTMamp)
 - Open **Network** and use the `Cast Host` / `Cast Port` rows to set:
   - `cast host` (e.g. `192.168.4.1`)
   - `cast port` (default `3000`)
