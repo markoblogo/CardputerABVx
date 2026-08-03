@@ -94,3 +94,31 @@ In CAST mode, **Music** screen shows:
 - `Err` (last error string)
 
 These lines are useful to quickly check whether YTMamp endpoint responds correctly and which track it currently tracks.
+
+## Short device validation checklist
+
+Use this sequence on Cardputer to validate that Cast integration works end-to-end:
+
+1. Open **Network**, connect to Wi-Fi, then set:
+   - `Cast Host` to the PC LAN IP (for example `192.168.4.1`)
+   - `Cast Port` to YTMamp API port (`3000`)
+2. Open **Music**, press `GO` once to enter CAST mode.
+3. With YTMamp playing a playlist on PC, verify:
+   - `Mode: CAST (...)` appears.
+   - `Track`, `Artist`, `Album`, `Track ID`, and `Err` lines update every 1.5s.
+4. Press:
+   - `SEL/ENT` → state toggles pause/play on PC.
+   - `RIGHT` → next track.
+   - `LEFT` → previous track.
+   - `UP` → play.
+   - `DOWN` → pause.
+   - UI should show temporary status such as `cast ok` and track metadata updates.
+5. Edge-case checks:
+   - **no active track**: stop music on PC or clear queue and open CAST status. Expected:
+     - Cardputer still in CAST mode.
+     - `Err` contains `no_active_track`.
+     - Track line is empty/idle (`no track`/blank title).
+   - **desktop offline**: disconnect YTMamp network or stop service.
+     - Cardputer shows `cast offline` and mode still responds.
+     - Playback controls still work on SD player via local mode when toggling `GO` back to Local.
+     - No crash/restart observed during repeated `toggle/next/prev`.
