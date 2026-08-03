@@ -19,6 +19,37 @@ Defaults are used when fields are missing:
 - host: `192.168.4.1`
 - port: `3000`
 
+The same values are also shown in the `Network` app in **Cast** section and persisted to:
+`/config/settings.json`.
+
+Current format:
+
+```json
+{
+  "castHost": "192.168.4.1",
+  "castPort": 3000
+}
+```
+
+## Network contract (host/port + status/cmd endpoints)
+
+Cardputer uses two API paths with fallback:
+
+- `GET /api/cast/status` then fallback `GET /cast/status`
+- `POST /api/cast/cmd` then fallback `GET /cast/{action}`
+
+Actions supported for command endpoint:
+- `toggle`, `play`, `pause`, `next`, `prev` (and optional `stop`).
+
+Requests are JSON based:
+
+- `GET /api/cast/status` response is JSON status object.
+- `POST /api/cast/cmd` body:
+
+```json
+{"action":"toggle"}
+```
+
 ## Usage flow
 
 1. Open **Network** and connect to Wi-Fi.
@@ -34,7 +65,7 @@ Defaults are used when fields are missing:
 
 ## Supported API contract
 
-Cardputer queries `GET /api/cast/status` and posts to `POST /api/cast/cmd`.
+Cardputer queries the status endpoint and sends commands through the cmd endpoint.
 No token is required for MVP.
 
 ### GET `/api/cast/status`
@@ -87,11 +118,25 @@ Supported actions:
 
 On success response returns updated state in the same format as status endpoint.
 
+## Retry/timeout policy
+
+- request timeout: `1500 ms`
+- attempts: `2` per endpoint
+- short inter-attempt delay: `90 ms`
+- fallback endpoints as above when API path differs
+- client retry budget in app is also applied by UI polling cooldown:
+  - normal poll cadence: `~1500 ms`
+  - soft backoff after failures: `120/700/1000 ms` with longer fallbacks on repeated errors
+
 ## Diagnostics in UI
 
 In CAST mode, **Music** screen shows:
 - `Track ID` (`track.track_id`)
 - `Err` (last error string)
+- `Net` line with last status:
+  - `on/off`
+  - attempt count
+  - last RTT in ms
 
 These lines are useful to quickly check whether YTMamp endpoint responds correctly and which track it currently tracks.
 

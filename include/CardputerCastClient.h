@@ -34,6 +34,9 @@ public:
   void setEndpoint(String host, uint16_t port);
   const String& host() const { return host_; }
   uint16_t port() const { return port_; }
+  uint16_t lastLatencyMs() const { return lastLatencyMs_; }
+  uint8_t lastAttemptCount() const { return lastAttemptCount_; }
+  const String& lastError() const { return lastError_; }
 
   bool getStatus(CardputerCastStatus& out);
   bool postCommand(const String& action, CardputerCastStatus* response = nullptr, const String& body = String());
@@ -54,4 +57,7 @@ private:
 
   String host_;
   uint16_t port_;
+  uint16_t lastLatencyMs_ = 0;
+  uint8_t lastAttemptCount_ = 0;
+  String lastError_ = "";
 };

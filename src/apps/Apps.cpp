@@ -132,12 +132,16 @@ void MusicApp::update() {
     if (millis() - castPollAt_ >= castPollEveryMs_) {
       castPollAt_ = millis();
       applyCastEndpointFromSettings();
-      if (!fetchCastStatus() && castPollFail_ > 4) {
+      const bool ok = fetchCastStatus();
+      castPollAt_ = millis();
+      if (!ok && castPollFail_ > 4) {
         mode_ = PlayMode::Local;
         status_ = "cast offline, fallback local";
         refreshLibrary();
+        return;
       }
     }
+    if (millis() - castPollNowAt_ < castPollBackoffMs_) return;
   }
   if (playing_ && millis() - vizTick_ > 120) {
     vizTick_ = millis();
@@ -167,8 +171,9 @@ void MusicApp::draw() {
     ctx_->ui->line(6, String("Vol: ") + castStatus_.volume);
     ctx_->ui->line(7, String("Track ID: ") + castStatus_.track);
     ctx_->ui->line(8, String("Err: ") + (castStatus_.error.length() ? castStatus_.error : "none"));
-    ctx_->ui->line(9, castStatus_.raw);
-    ctx_->ui->line(10, status_, status_.startsWith("error") ? TerminalUI::Red : TerminalUI::Green);
+    ctx_->ui->line(9, String("Net: ") + (castStatus_.connected ? "on " : "off ") + "a=" + String(lastCastAttempts_) + " rtt=" + String(lastCastNetMs_) + "ms");
+    ctx_->ui->line(10, String("Retry: ") + String(castPollFail_));
+    ctx_->ui->line(11, status_, status_.startsWith("error") ? TerminalUI::Red : TerminalUI::Green);
     return;
   }
 
@@ -286,13 +291,23 @@ bool MusicApp::sendCastCommand(const char* action, const String& body) {
     status_ = "error: no wifi";
     return false;
   }
+  const uint32_t now = millis();
+  if (castPollNowAt_ && (now - castPollNowAt_) < castPollBackoffMs_) {
+    status_ = "cast retry cooldown";
+    return false;
+  }
 
   applyCastEndpointFromSettings();
   CardputerCastStatus status;
   const String payload = body.length() ? body : String("{\"action\":\"") + cmd + "\"}";
   const bool ok = castClient_.postCommand(cmd, &status, payload);
+  castPollNowAt_ = now;
+  castPollBackoffMs_ = 220;
   if (ok) {
     status_ = status.ok ? "cast ok" : String("cast ") + String(cmd) + " rejected";
+    lastCastNetMs_ = castClient_.lastLatencyMs();
+    lastCastAttempts_ = castClient_.lastAttemptCount();
+    castPollFail_ = 0;
     castStatus_.connected = status.connected;
     castStatus_.playing = status.playing;
     castStatus_.track = status.track.title.length() ? status.track.title : status.track.trackId;
@@ -305,9 +320,14 @@ bool MusicApp::sendCastCommand(const char* action, const String& body) {
     castStatus_.error = status.error;
     castStatus_.track = status.track.trackId;
     castStatus_.raw = status.raw.substring(0, 120);
+    castPollBackoffMs_ = 120;
     return true;
   }
   status_ = "cast command failed";
+  lastCastNetMs_ = castClient_.lastLatencyMs();
+  lastCastAttempts_ = castClient_.lastAttemptCount();
+  if (castPollFail_ < 255) castPollFail_++;
+  castPollBackoffMs_ = 700;
   return false;
 }
 
@@ -322,6 +342,9 @@ bool MusicApp::fetchCastStatus() {
   CardputerCastStatus status;
   if (!castClient_.getStatus(status)) {
     castPollFail_++;
+    lastCastNetMs_ = castClient_.lastLatencyMs();
+    lastCastAttempts_ = castClient_.lastAttemptCount();
+    castPollBackoffMs_ = castPollFail_ > 2 ? 1000 : 320;
     if (castPollFail_ > 4) {
       castStatus_.connected = false;
       status_ = "cast status failed";
@@ -330,6 +353,9 @@ bool MusicApp::fetchCastStatus() {
   }
 
   castPollFail_ = 0;
+  lastCastNetMs_ = castClient_.lastLatencyMs();
+  lastCastAttempts_ = castClient_.lastAttemptCount();
+  castPollBackoffMs_ = 0;
   castDirty_ = true;
   castStatus_.connected = status.connected;
   castStatus_.playing = status.playing || status.state.equalsIgnoreCase("playing");

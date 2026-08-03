@@ -42,9 +42,13 @@ private:
   PlayMode mode_ = PlayMode::Local;
   String castHost_ = "192.168.4.1";
   uint16_t castPort_ = 3000;
+  uint32_t castPollNowAt_ = 0;
   uint32_t castPollAt_ = 0;
   uint32_t castPollEveryMs_ = 1500;
   uint8_t castPollFail_ = 0;
+  uint16_t castPollBackoffMs_ = 0;
+  uint32_t lastCastNetMs_ = 0;
+  uint8_t lastCastAttempts_ = 0;
   bool castDirty_ = false;
   CardputerCastClient castClient_{castHost_, castPort_};
   CastStatus castStatus_;

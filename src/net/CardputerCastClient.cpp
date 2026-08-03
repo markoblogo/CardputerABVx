@@ -29,10 +29,15 @@ bool CardputerCastClient::requestJson(
   String& err
 ) {
   HTTPClient http;
+  const uint32_t startedMs = millis();
+  lastError_ = "ok";
+  lastAttemptCount_++;
   const String url = baseUrl() + path;
   if (!http.begin(url)) {
     err = "http init failed";
     code = 0;
+    lastError_ = err;
+    lastLatencyMs_ = static_cast<uint16_t>(min<uint32_t>(millis() - startedMs, 65535));
     return false;
   }
   http.setTimeout(timeoutMs);
@@ -42,8 +47,11 @@ bool CardputerCastClient::requestJson(
   http.end();
   if (code <= 0) {
     err = "request failed";
+    lastError_ = err;
+    lastLatencyMs_ = static_cast<uint16_t>(min<uint32_t>(millis() - startedMs, 65535));
     return false;
   }
+  lastLatencyMs_ = static_cast<uint16_t>(min<uint32_t>(millis() - startedMs, 65535));
   return true;
 }
 
@@ -138,8 +146,11 @@ bool CardputerCastClient::getStatus(CardputerCastStatus& out) {
   String response;
   int code = 0;
   String err;
-  const uint8_t attempts = 3;
-  const int timeoutMs = 2200;
+  const uint8_t attempts = 2;
+  const int timeoutMs = 1500;
+  lastLatencyMs_ = 0;
+  lastAttemptCount_ = 0;
+  lastError_.remove(0);
 
   const String paths[] = { "/api/cast/status", "/cast/status" };
   for (uint8_t i = 0; i < 2; ++i) {
@@ -147,11 +158,12 @@ bool CardputerCastClient::getStatus(CardputerCastStatus& out) {
     for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
       if (requestJson(path, false, String(), timeoutMs, response, code, err) && code >= 200 && code < 300) {
         if (parseStatus(response, out)) {
+          lastError_ = err;
           return true;
         }
       }
       if (attempt + 1 < attempts) {
-        delay(120);
+        delay(90);
       }
     }
   }
@@ -159,6 +171,7 @@ bool CardputerCastClient::getStatus(CardputerCastStatus& out) {
   out.connected = false;
   out.ok = false;
   out.error = err.length() ? err : String("request_failed_") + String(code);
+  lastError_ = out.error;
   return false;
 }
 
@@ -167,17 +180,21 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
   String response;
   int code = 0;
   String err;
-  const uint8_t attempts = 3;
-  const int timeoutMs = 2200;
+  const uint8_t attempts = 2;
+  const int timeoutMs = 1500;
+  lastLatencyMs_ = 0;
+  lastAttemptCount_ = 0;
+  lastError_.remove(0);
 
   const String apiPath = "/api/cast/cmd";
   for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
     if (requestJson(apiPath, true, bodyToSend, timeoutMs, response, code, err) && code >= 200 && code < 300) {
       if (responseStatus) parseStatus(response, *responseStatus);
+      lastError_ = err;
       return true;
     }
     if (attempt + 1 < attempts) {
-      delay(120);
+      delay(90);
     }
   }
 
@@ -193,7 +210,7 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
       return true;
     }
     if (attempt + 1 < attempts) {
-      delay(120);
+      delay(90);
     }
   }
   if (responseStatus) {
@@ -201,5 +218,6 @@ bool CardputerCastClient::postCommand(const String& action, CardputerCastStatus*
     responseStatus->ok = false;
     responseStatus->error = err.length() ? err : String("request_failed_") + String(code);
   }
+  lastError_ = err.length() ? err : responseStatus ? responseStatus->error : String("request_failed_") + String(code);
   return false;
 }
