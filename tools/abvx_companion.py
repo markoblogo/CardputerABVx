@@ -78,6 +78,99 @@ def visible_files(directory, suffix=None):
             (suffix is None or path.suffix.lower() == suffix)]
 
 
+def is_safe_activity_id(value):
+    if not value or len(value) > 64:
+        return False
+    for char in value:
+        code = ord(char)
+        if char.isalnum() or char in "_-.:":
+            continue
+        if 0x20 <= code <= 0x7e:
+            return False
+        return False
+    return True
+
+
+def list_activities(sd_root):
+    activity_dir = Path(sd_root) / "activities"
+    if not activity_dir.is_dir():
+        return []
+
+    index_path = activity_dir / "INDEX.TXT"
+    items = []
+    seen = set()
+
+    if index_path.is_file():
+        for line in index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("|", 1)
+            stored = parts[0].strip()
+            if not stored or stored in seen:
+                continue
+            title = parts[1].strip() if len(parts) > 1 else ""
+            file_path = activity_dir / stored
+            if file_path.suffix:
+                identifier = file_path.stem if file_path.suffix else stored
+            else:
+                identifier = stored
+            target = file_path
+            if not target.exists():
+                first = activity_dir / f"{stored}.JSON"
+                second = activity_dir / f"{stored}.json"
+                target = first if first.is_file() else second if second.is_file() else file_path
+            items.append({
+                "id": identifier,
+                "name": target.name,
+                "title": title or identifier,
+                "size": target.stat().st_size if target.is_file() else 0
+            })
+            seen.add(stored)
+
+    fallback = [p for p in activity_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in {".json", ".txt", ".gpx"}]
+    for path in sorted(fallback, key=lambda item: item.name.casefold()):
+        stored = path.name
+        if stored.upper() == "INDEX.TXT" or stored in seen:
+            continue
+        base = path.stem
+        if base in seen:
+            continue
+        title = ""
+        items.append({
+            "id": base,
+            "name": path.name,
+            "title": title,
+            "size": path.stat().st_size
+        })
+        seen.add(base)
+    return items
+
+
+def read_activity_file(sd_root, activity_id):
+    activity_dir = Path(sd_root) / "activities"
+    if not activity_dir.is_dir():
+        raise RuntimeError("activities folder missing")
+    if not is_safe_activity_id(activity_id):
+        raise RuntimeError("bad id")
+
+    if "." in activity_id:
+        candidate = activity_dir / activity_id
+        if not candidate.is_file():
+            raise RuntimeError("not found")
+        return candidate
+
+    for extension in (".JSON", ".json", ".GPX", ".gpx", ".TXT", ".txt"):
+        candidate = activity_dir / f"{activity_id}{extension}"
+        if candidate.is_file():
+            return candidate
+
+    direct = activity_dir / activity_id
+    if direct.is_file():
+        return direct
+    raise RuntimeError("not found")
+
+
 def remove_visible_files(directory, suffix=None):
     if not directory.is_dir():
         return 0

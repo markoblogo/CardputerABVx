@@ -224,11 +224,16 @@ def device_status():
         sd = core.resolve_sd(SD_OVERRIDE)
         usage = os.statvfs(sd)
         total, free = usage.f_blocks * usage.f_frsize, usage.f_bavail * usage.f_frsize
+        activities_count = len(core.visible_files(sd / "activities", ".json")) + \
+                          len(core.visible_files(sd / "activities", ".txt")) + \
+                          len(core.visible_files(sd / "activities", ".gpx"))
         result["sd"] = {"ready": True, "path": str(sd), "total": total,
                         "used": total - free, "free": free,
                         "music": len(core.visible_files(sd / "music", ".mp3")),
                         "books": len(core.visible_files(sd / "books", ".txt")),
-                        "notes": len(core.visible_files(sd / "notes", ".txt")), "error": ""}
+                        "notes": len(core.visible_files(sd / "notes", ".txt")),
+                        "activities": activities_count,
+                        "error": ""}
     except Exception as exc:
         result["sd"]["error"] = str(exc)
     job_running = result["job"]["state"] == "RUNNING"
@@ -285,22 +290,43 @@ class Handler(BaseHTTPRequestHandler):
             self._error(403, "invalid host")
             return
         path = urllib.parse.urlsplit(self.path).path
-        if path == "/":
-            body = UI_FILE.read_text(encoding="utf-8").replace("__ABVX_TOKEN__", STATE.token).encode()
-            self.send_response(200)
-            self._headers("text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        elif path == "/api/status":
-            self._json(200, {"ok": True, **device_status()})
-        elif path == "/api/job":
-            self._json(200, {"ok": True, **STATE.snapshot()})
-        elif path == "/favicon.ico":
-            self.send_response(204)
-            self.end_headers()
-        else:
-            self._error(404, "not found")
+        try:
+            if path == "/":
+                body = UI_FILE.read_text(encoding="utf-8").replace("__ABVX_TOKEN__", STATE.token).encode()
+                self.send_response(200)
+                self._headers("text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif path == "/api/status":
+                self._json(200, {"ok": True, **device_status()})
+            elif path == "/api/job":
+                self._json(200, {"ok": True, **STATE.snapshot()})
+            elif path == "/api/activities":
+                sd = core.resolve_sd(SD_OVERRIDE)
+                items = core.list_activities(sd)
+                self._json(200, {"ok": True, "count": len(items), "items": items})
+            elif path == "/api/activity":
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                activity_id = query.get("id", [""])[0]
+                if not activity_id:
+                    self._error(400, "missing id")
+                    return
+                sd = core.resolve_sd(SD_OVERRIDE)
+                path_entry = core.read_activity_file(sd, activity_id)
+                payload = path_entry.read_text(encoding="utf-8", errors="replace")
+                self._json(200, {"ok": True,
+                                "id": activity_id,
+                                "name": path_entry.name,
+                                "size": path_entry.stat().st_size,
+                                "content": payload})
+            elif path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+            else:
+                self._error(404, "not found")
+        except Exception as exc:
+            self._error(400, str(exc))
 
     def do_POST(self):
         if not self._host_ok() or not secrets.compare_digest(self.headers.get("X-ABVX-Token", ""), STATE.token):
