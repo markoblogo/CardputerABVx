@@ -64,6 +64,19 @@ For normal use, open `tools/ABVx Companion.app` from Finder. The lightweight app
 - Firmware version when available.
 - Synchronize time.
 
+### Export status
+
+- Constant local backup is maintained in `~/ABVxCompanionBackup`:
+  - `Tracks/`
+  - `Notes/`
+  - `Voice/`
+  - `.state/sync-status.json`
+- The UI exposes **Last / Pending / Failed / Done** state for:
+  - Tracks (import)
+  - Notes (pull)
+  - Voice (pull)
+- This is non-invasive to firmware and keeps local visibility of recovery operations.
+
 ### Firmware
 
 - Build current firmware.

@@ -28,6 +28,8 @@ button,input,select{font:inherit}
 .capacity{height:8px;border:1px solid #344138;background:#060806;padding:1px}.capacity i{display:block;height:100%;width:0;background:var(--acid);box-shadow:0 0 15px #b8ff4673;transition:width .4s}
 .stats{display:flex;gap:24px;margin-top:12px}.stat b{display:block;font-size:18px}.stat span{font-size:9px;color:var(--muted)}
 .device-lines{display:grid;gap:10px;align-content:center}.device-line{display:flex;justify-content:space-between;border-bottom:1px dashed #283029;padding-bottom:8px;font-size:11px}.device-line span{color:var(--muted)}
+.sync-row{display:grid;grid-template-columns:1fr auto;gap:12px;padding:7px 0;border-bottom:1px dashed #273027;font-size:10px}.sync-title{font-size:10px;color:var(--muted)}.sync-meta{font-size:9px;color:var(--muted);margin-top:3px}.sync-state{min-width:84px;text-align:right;color:var(--acid)}
+.sync-list{min-height:68px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
 .card{border:1px solid var(--line);background:#0d120ff0;padding:20px;min-height:220px;position:relative}
 .card h2{font-size:14px;margin:0 0 4px;letter-spacing:.08em}
@@ -110,6 +112,16 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
           <div class="row"><span><b>Rules</b></span><span class="code">size ≤ 128MB, >0 bytes</span></div>
         </div>
         <div id="fileContract" class="device-line" style="margin-top:12px"><span>FILE CONTRACT</span><b id="fileContractLine">book: .txt .epub .fb2 • music: .mp3 • notes: .txt</b></div>
+      </article>
+      <article class="card">
+        <span class="tag">BACKUP</span>
+        <h2>Export status</h2>
+        <p>Track, notes, and voice sync health with last operation markers.</p>
+        <div id="syncPanel" class="sync-list">Loading sync state…</div>
+        <div class="actions" style="margin-top:12px">
+          <button id="syncNotesBtn" class="btn">SYNC NOTES</button>
+          <button id="syncVoiceBtn" class="btn">SYNC VOICE</button>
+        </div>
       </article>
       <article class="card">
         <span class="tag">ERRORS</span>
@@ -220,11 +232,36 @@ function friendlyError(raw) {
 }
 
 const toIcon = state => ({RUNNING:"◌", DONE:"✓", FAILED:"✕", IDLE:"•"}[state] || "•");
+const toSyncIcon = state => ({DONE:"✓", FAILED:"✕", PENDING:"◌", IDLE:"•"}[state] || "•");
 
 function log(line) {
   const t = $("terminal");
   t.textContent = (t.textContent + "\n" + line).trim().slice(-MAX_UI_LOG);
   t.scrollTop = t.scrollHeight;
+}
+
+function renderSyncPanel() {
+  if (!latest) return;
+  const sync = latest.sync || {};
+  const row = (key, label) => {
+    const item = sync[key] || {};
+    const state = String(item.state || "IDLE").toUpperCase();
+    const file = item.last_file ? `last: ${esc(item.last_file)}` : "last: -";
+    const when = item.last_sync ? esc(item.last_sync) : "never";
+    const err = item.last_error ? ` · ${esc(item.last_error)}` : "";
+    return `<div class="sync-row"><div><span class="sync-title">${label}</span><div class="sync-meta">${file} · ${when}${err}</div></div><div class="sync-state">${toSyncIcon(state)} ${esc(state)}</div></div>`;
+  };
+  $("syncPanel").innerHTML = `${row("tracks", "Tracks")}${row("notes", "Notes")}${row("voice", "Voice")}`;
+}
+
+async function triggerSync(kind) {
+  const endpoints = { notes: "/api/sync-notes", voice: "/api/sync-voice" };
+  const path = endpoints[kind];
+  if (!path) throw new Error("Unsupported sync kind");
+  const data = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  log(data.message || `${kind} sync complete`);
+  toast(data.message || "Sync complete");
+  await refresh();
 }
 
 function toast(message, bad = false) {
@@ -250,6 +287,10 @@ function applyActionState() {
   $("buildBtn").disabled = busy || !readyBuild;
   $("flashBtn").disabled = busy || !readyFlash;
   $("timeBtn").disabled = busy;
+
+  const tracksReady = Boolean(latest.sd.ready);
+  $("syncNotesBtn").disabled = busy || !tracksReady;
+  $("syncVoiceBtn").disabled = busy || !tracksReady;
 
   $("importState").textContent = readyImport ? "READY" : "SD OFFLINE";
   $("importState").style.color = readyImport ? "var(--acid)" : "var(--bad)";
@@ -324,7 +365,8 @@ async function refresh() {
 
     applyActionState();
     updateQueuePanel();
-    log(`status: job=${latest.job.state}, ready_import=${latest.ready_import ? 'yes' : 'no'}`);
+  log(`status: job=${latest.job.state}, ready_import=${latest.ready_import ? 'yes' : 'no'}`);
+  renderSyncPanel();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -373,6 +415,27 @@ async function imports(kind, files) {
     }
   }
   setTimeout(() => { bar.className = "progress"; bar.firstElementChild.style.width = "0"; }, 700);
+}
+
+function setupSyncButtons() {
+  $("syncNotesBtn").onclick = async () => {
+    try {
+      const data = await triggerSync("notes");
+      await refresh();
+      log(data?.message || "Notes sync done");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
+  $("syncVoiceBtn").onclick = async () => {
+    try {
+      const data = await triggerSync("voice");
+      await refresh();
+      log(data?.message || "Voice sync done");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
 }
 
 function setupDrop(kind) {
@@ -449,6 +512,7 @@ $("confirmFlash").onclick = async () => {
 
 setupDrop("book");
 setupDrop("music");
+setupSyncButtons();
 renderErrorTemplates();
 setInterval(() => { $("localClock").textContent = new Date().toLocaleString(); }, 1000);
 refresh();
