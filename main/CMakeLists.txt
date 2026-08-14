@@ -15,6 +15,7 @@ idf_component_register(
         esp_driver_gpio
         esp_event
         esp_http_server
+        esp_http_client
         esp_netif
         esp_wifi
         fatfs

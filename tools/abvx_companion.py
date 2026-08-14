@@ -15,7 +15,8 @@ import zipfile
 from pathlib import Path
 
 
-LAYOUT = ("music", "books", "notes", "CARDPTR")
+LAYOUT = ("music", "books", "notes", "rec", "recordings", "habits", "browser", "cardputer", "CARDPTR")
+DEFAULT_LOCAL_ROOT = Path.home() / "Downloads" / "Cardputer Local"
 MAX_BOOK_BYTES = 64 * 1024 * 1024
 MAX_BOOK_TEXT_CHARS = 16 * 1024 * 1024
 MAX_EPUB_MEMBER_BYTES = 8 * 1024 * 1024
@@ -57,6 +58,10 @@ def ensure_layout(sd):
         (sd / name).mkdir(parents=True, exist_ok=True)
 
 
+def local_root(path=None):
+    return Path(path).expanduser().resolve() if path else DEFAULT_LOCAL_ROOT.resolve()
+
+
 def human_size(value):
     amount = float(value)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -71,6 +76,109 @@ def visible_files(directory, suffix=None):
     return [path for path in directory.iterdir()
             if path.is_file() and not path.name.startswith(".") and
             (suffix is None or path.suffix.lower() == suffix)]
+
+
+def is_safe_activity_id(value):
+    if not value or len(value) > 64:
+        return False
+    for char in value:
+        code = ord(char)
+        if char.isalnum() or char in "_-.:":
+            continue
+        if 0x20 <= code <= 0x7e:
+            return False
+        return False
+    return True
+
+
+def list_activities(sd_root):
+    activity_dir = Path(sd_root) / "activities"
+    if not activity_dir.is_dir():
+        return []
+
+    index_path = activity_dir / "INDEX.TXT"
+    items = []
+    seen = set()
+
+    if index_path.is_file():
+        for line in index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("|", 1)
+            stored = parts[0].strip()
+            if not stored or stored in seen:
+                continue
+            title = parts[1].strip() if len(parts) > 1 else ""
+            file_path = activity_dir / stored
+            if file_path.suffix:
+                identifier = file_path.stem if file_path.suffix else stored
+            else:
+                identifier = stored
+            target = file_path
+            if not target.exists():
+                first = activity_dir / f"{stored}.JSON"
+                second = activity_dir / f"{stored}.json"
+                target = first if first.is_file() else second if second.is_file() else file_path
+            items.append({
+                "id": identifier,
+                "name": target.name,
+                "title": title or identifier,
+                "size": target.stat().st_size if target.is_file() else 0
+            })
+            seen.add(stored)
+
+    fallback = [p for p in activity_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in {".json", ".txt", ".gpx"}]
+    for path in sorted(fallback, key=lambda item: item.name.casefold()):
+        stored = path.name
+        if stored.upper() == "INDEX.TXT" or stored in seen:
+            continue
+        base = path.stem
+        if base in seen:
+            continue
+        title = ""
+        items.append({
+            "id": base,
+            "name": path.name,
+            "title": title,
+            "size": path.stat().st_size
+        })
+        seen.add(base)
+    return items
+
+
+def read_activity_file(sd_root, activity_id):
+    activity_dir = Path(sd_root) / "activities"
+    if not activity_dir.is_dir():
+        raise RuntimeError("activities folder missing")
+    if not is_safe_activity_id(activity_id):
+        raise RuntimeError("bad id")
+
+    if "." in activity_id:
+        candidate = activity_dir / activity_id
+        if not candidate.is_file():
+            raise RuntimeError("not found")
+        return candidate
+
+    for extension in (".JSON", ".json", ".GPX", ".gpx", ".TXT", ".txt"):
+        candidate = activity_dir / f"{activity_id}{extension}"
+        if candidate.is_file():
+            return candidate
+
+    direct = activity_dir / activity_id
+    if direct.is_file():
+        return direct
+    raise RuntimeError("not found")
+
+
+def remove_visible_files(directory, suffix=None):
+    if not directory.is_dir():
+        return 0
+    removed = 0
+    for path in visible_files(directory, suffix):
+        path.unlink()
+        removed += 1
+    return removed
 
 
 def print_status(sd):
@@ -89,6 +197,30 @@ def sanitize_title(name):
     title = unicodedata.normalize("NFC", Path(name).stem)
     title = " ".join(title.replace("|", " ").split())
     return title[:160] or "Untitled"
+
+
+def default_music_source(root):
+    return local_root(root) / "Music Source"
+
+
+def default_books_source(root):
+    return local_root(root) / "Books Source"
+
+
+def default_notes_source(root):
+    return local_root(root) / "Notes Export"
+
+
+def default_notes_backup(root):
+    return local_root(root) / "Backups" / "Notes"
+
+
+def default_recordings_backup(root):
+    return local_root(root) / "Backups" / "Recordings"
+
+
+def default_sd_mirror(root):
+    return local_root(root) / "Exports" / "CardP SD Mirror"
 
 
 def read_index(path):
@@ -137,6 +269,25 @@ def atomic_copy(source, destination):
         raise
 
 
+def atomic_replace_bytes(destination, payload):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".TMP")
+    try:
+        temporary.unlink(missing_ok=True)
+        with temporary.open("wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def atomic_replace_text(destination, text):
+    atomic_replace_bytes(destination, text.encode("utf-8"))
+
+
 def has_mp3_sync(source):
     with source.open("rb") as stream:
         header = stream.read(10)
@@ -176,6 +327,27 @@ def add_music(sd, sources):
         copied += 1
         print(f"ADD MUSIC {source.name} -> {stored} | {title}")
     print(f"OK MUSIC copied={copied}")
+
+
+def sync_music_mirror(source_dir, mirror_root):
+    source_dir = Path(source_dir).expanduser().resolve()
+    if not source_dir.is_dir():
+        raise RuntimeError(f"music source not found: {source_dir}")
+    mirror_root = Path(mirror_root).expanduser().resolve()
+    ensure_layout(mirror_root)
+    mirror_music = mirror_root / "music"
+    removed = remove_visible_files(mirror_music)
+    copied = 0
+    files = sorted(path for path in source_dir.iterdir()
+                   if path.is_file() and not path.name.startswith(".") and path.suffix.lower() == ".mp3")
+    if not files:
+        print(f"OK MUSIC MIRROR copied=0 removed={removed}")
+        return
+    index_path = mirror_music / "INDEX.TXT"
+    index_path.unlink(missing_ok=True)
+    add_music(mirror_root, [str(path) for path in files])
+    copied = len(visible_files(mirror_music, ".mp3"))
+    print(f"OK MUSIC MIRROR copied={copied} removed={removed}")
 
 
 def decode_book(raw):
@@ -407,6 +579,15 @@ def convert_book(source):
         text, encoding = decode_book(source.read_bytes())
         return (unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n"),
                 sanitize_title(source.name), "", encoding, 0)
+    if suffix in (".html", ".htm"):
+        parser = EpubTextParser()
+        parser.feed(source.read_text(encoding="utf-8", errors="replace"))
+        parser.close()
+        text = parser.text()
+        if not text:
+            raise RuntimeError(f"HTML has no readable text: {source.name}")
+        return (unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n"),
+                sanitize_title(source.name), "", "html", 0)
     if suffix == ".epub":
         title, author, chapters = epub_metadata_and_chapters(source)
         return format_prepared_book(title, author, chapters), title, author, "epub", len(chapters)
@@ -438,8 +619,8 @@ def add_books(sd, sources):
     copied = 0
     for value in sources:
         source = Path(value).expanduser().resolve()
-        if not source.is_file() or source.suffix.lower() not in (".txt", ".epub", ".fb2"):
-            raise RuntimeError(f"not a TXT/EPUB/FB2 file: {source}")
+        if not source.is_file() or source.suffix.lower() not in (".txt", ".epub", ".fb2", ".html", ".htm"):
+            raise RuntimeError(f"not a TXT/EPUB/FB2/HTML file: {source}")
         size = source.stat().st_size
         if size <= 0 or size > MAX_BOOK_BYTES:
             raise RuntimeError(f"book size must be 1..{MAX_BOOK_BYTES} bytes: {source.name}")
@@ -464,6 +645,107 @@ def add_books(sd, sources):
     print(f"OK BOOKS copied={copied}")
 
 
+def sync_books_mirror(source_dir, mirror_root):
+    source_dir = Path(source_dir).expanduser().resolve()
+    if not source_dir.is_dir():
+        raise RuntimeError(f"books source not found: {source_dir}")
+    mirror_root = Path(mirror_root).expanduser().resolve()
+    ensure_layout(mirror_root)
+    mirror_books = mirror_root / "books"
+    removed = remove_visible_files(mirror_books)
+    files = sorted(path for path in source_dir.iterdir()
+                   if path.is_file() and not path.name.startswith(".") and
+                   path.name != "README.txt" and path.suffix.lower() in (".txt", ".epub", ".fb2", ".html", ".htm"))
+    if not files:
+        print(f"OK BOOKS MIRROR copied=0 removed={removed}")
+        return
+    (mirror_books / "BOOKS.IDX").unlink(missing_ok=True)
+    add_books(mirror_root, [str(path) for path in files])
+    copied = len(visible_files(mirror_books, ".txt"))
+    print(f"OK BOOKS MIRROR copied={copied} removed={removed}")
+
+
+def push_notes(sd, source_dir):
+    source_dir = Path(source_dir).expanduser().resolve()
+    if not source_dir.is_dir():
+        raise RuntimeError(f"notes source not found: {source_dir}")
+    destination_dir = sd / "notes"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    pushed = 0
+    for source in sorted(path for path in source_dir.iterdir()
+                         if path.is_file() and not path.name.startswith(".") and path.suffix.lower() == ".txt"):
+        atomic_replace_text(destination_dir / source.name, source.read_text(encoding="utf-8", errors="replace"))
+        pushed += 1
+        print(f"PUSH NOTE {source.name}")
+    print(f"OK NOTES PUSH pushed={pushed}")
+
+
+def pull_notes(sd, destination_dir, delete_after=False):
+    destination_dir = Path(destination_dir).expanduser().resolve()
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    pulled = 0
+    deleted = 0
+    for source in sorted(visible_files(sd / "notes", ".txt"), key=lambda path: path.name.casefold()):
+        atomic_copy(source, destination_dir / source.name) if not (destination_dir / source.name).exists() else \
+            atomic_replace_text(destination_dir / source.name, source.read_text(encoding="utf-8", errors="replace"))
+        pulled += 1
+        print(f"PULL NOTE {source.name}")
+        if delete_after:
+            source.unlink()
+            deleted += 1
+            print(f"DELETE NOTE {source.name}")
+    print(f"OK NOTES PULL pulled={pulled} deleted={deleted}")
+
+
+def pull_recordings(sd, destination_dir, delete_after=False):
+    destination_dir = Path(destination_dir).expanduser().resolve()
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    source_dirs = [sd / "rec", sd / "recordings"]
+    pulled = 0
+    deleted = 0
+    seen = set()
+    for directory in source_dirs:
+        for source in sorted(path for path in visible_files(directory) if path.suffix.lower() in (".wav", ".pcm")):
+            if source.name in seen:
+                continue
+            seen.add(source.name)
+            destination = destination_dir / source.name
+            if destination.exists():
+                destination.unlink()
+            atomic_copy(source, destination)
+            pulled += 1
+            print(f"PULL REC {source.name}")
+            if delete_after:
+                source.unlink()
+                deleted += 1
+                print(f"DELETE REC {source.name}")
+    print(f"OK RECORDINGS pulled={pulled} deleted={deleted}")
+
+
+def deploy_mirror_to_sd(sd, mirror_root, section):
+    mirror_root = Path(mirror_root).expanduser().resolve()
+    source_dir = mirror_root / section
+    if not source_dir.is_dir():
+        raise RuntimeError(f"mirror section not found: {source_dir}")
+    destination_dir = sd / section
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    remove_visible_files(destination_dir)
+    copied = 0
+    for source in sorted(path for path in source_dir.iterdir() if path.is_file() and not path.name.startswith(".")):
+        destination = destination_dir / source.name
+        if destination.exists():
+            destination.unlink()
+        atomic_copy(source, destination)
+        copied += 1
+    print(f"OK DEPLOY {section} copied={copied}")
+
+
+def maintenance_backup(sd, notes_dir, recordings_dir, delete_recordings=False):
+    pull_notes(sd, notes_dir)
+    pull_recordings(sd, recordings_dir, delete_after=delete_recordings)
+    print("OK PREFLIGHT")
+
+
 def sync_time(url):
     helper = Path(__file__).with_name("cardputer_time_sync.py")
     subprocess.run([sys.executable, str(helper), "--url", url, "sync"], check=True)
@@ -472,6 +754,7 @@ def sync_time(url):
 def main():
     parser = argparse.ArgumentParser(description="ABVx Mac Companion Core")
     parser.add_argument("--sd", help="mounted SD root, for example /Volumes/CARDPUTER")
+    parser.add_argument("--local-root", help="Cardputer Local root")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="show mounted SD capacity and content counts")
     sub.add_parser("init", help="create the ABVx SD folder layout")
@@ -479,6 +762,25 @@ def main():
     music.add_argument("files", nargs="+")
     books = sub.add_parser("add-book", help="convert TXT/EPUB/FB2 books to Reader UTF-8 TXT")
     books.add_argument("files", nargs="+")
+    sync_music = sub.add_parser("sync-music", help="rebuild prepared music mirror and optionally deploy to SD")
+    sync_music.add_argument("--source")
+    sync_music.add_argument("--mirror")
+    sync_music.add_argument("--deploy", action="store_true")
+    sync_books = sub.add_parser("sync-books", help="rebuild prepared books mirror and optionally deploy to SD")
+    sync_books.add_argument("--source")
+    sync_books.add_argument("--mirror")
+    sync_books.add_argument("--deploy", action="store_true")
+    push_notes_cmd = sub.add_parser("push-notes", help="push local TXT notes to mounted SD")
+    push_notes_cmd.add_argument("--source")
+    pull_notes_cmd = sub.add_parser("pull-notes", help="pull SD TXT notes into local backup")
+    pull_notes_cmd.add_argument("--dest")
+    pull_rec_cmd = sub.add_parser("pull-recordings", help="pull SD recordings into local backup")
+    pull_rec_cmd.add_argument("--dest")
+    pull_rec_cmd.add_argument("--delete-after", action="store_true")
+    preflight = sub.add_parser("preflight-backup", help="pull notes and recordings before maintenance")
+    preflight.add_argument("--notes-dest")
+    preflight.add_argument("--recordings-dest")
+    preflight.add_argument("--delete-recordings", action="store_true")
     clock = sub.add_parser("sync-time", help="sync Cardputer clock over its Connections AP")
     clock.add_argument("--url", default="http://192.168.4.1")
     args = parser.parse_args()
@@ -487,6 +789,7 @@ def main():
         sync_time(args.url)
         return
     sd = resolve_sd(args.sd, allow_empty=args.command == "init")
+    root = local_root(args.local_root)
     if args.command == "status":
         print_status(sd)
     elif args.command == "init":
@@ -496,6 +799,29 @@ def main():
         add_music(sd, args.files)
     elif args.command == "add-book":
         add_books(sd, args.files)
+    elif args.command == "sync-music":
+        mirror = args.mirror or str(default_sd_mirror(root))
+        source = args.source or str(default_music_source(root))
+        sync_music_mirror(source, mirror)
+        if args.deploy:
+            deploy_mirror_to_sd(sd, mirror, "music")
+    elif args.command == "sync-books":
+        mirror = args.mirror or str(default_sd_mirror(root))
+        source = args.source or str(default_books_source(root))
+        sync_books_mirror(source, mirror)
+        if args.deploy:
+            deploy_mirror_to_sd(sd, mirror, "books")
+    elif args.command == "push-notes":
+        push_notes(sd, args.source or str(default_notes_source(root)))
+    elif args.command == "pull-notes":
+        pull_notes(sd, args.dest or str(default_notes_backup(root)))
+    elif args.command == "pull-recordings":
+        pull_recordings(sd, args.dest or str(default_recordings_backup(root)), delete_after=args.delete_after)
+    elif args.command == "preflight-backup":
+        maintenance_backup(sd,
+                           args.notes_dest or str(default_notes_backup(root)),
+                           args.recordings_dest or str(default_recordings_backup(root)),
+                           delete_recordings=args.delete_recordings)
 
 
 if __name__ == "__main__":

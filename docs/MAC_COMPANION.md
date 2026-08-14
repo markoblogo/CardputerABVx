@@ -2,6 +2,22 @@
 
 The Companion is the desktop control surface for Pocket OS. Users should not need Terminal for routine device work.
 
+## Source and mirror contract
+
+Recommended local structure:
+
+- `Cardputer Local/Music Source`
+- `Cardputer Local/Books Source`
+- `Cardputer Local/Exports/CardP SD Mirror`
+- `Cardputer Local/Backups`
+
+Rules:
+
+- `Music Source` and `Books Source` keep human-friendly originals.
+- `CardP SD Mirror` keeps only Cardputer-ready runtime files.
+- The mounted SD should be treated as a deployment target, not as the source of truth.
+- Companion import/export logic should operate between `Source -> Mirror -> SD`, not directly from arbitrary folders to firmware-facing storage.
+
 ## Architecture
 
 ```text
@@ -13,6 +29,18 @@ Mac UI
 ```
 
 `tools/abvx_companion.py` is the first reusable core, not the final user interface. Conversion, validation, naming, indexing, and transport must remain separate so the same operations can be called from CLI, local web UI, or a packaged macOS app.
+
+For host-only staging use:
+
+`tools/cardputer_local_pipeline.py`
+
+It implements a repeatable source->mirror->deploy flow:
+
+- `init` creates `Cardputer Local` source/mirror folders
+- `sync-music` rebuilds prepared music mirror (with `INDEX.TXT`)
+- `sync-books` rebuilds prepared books mirror (with `BOOKS.IDX`)
+- `sync-all` rebuilds both sections
+- optional `--deploy --sd /Volumes/NAME` pushes section mirrors directly to SD
 
 ## Recommended delivery path
 
@@ -35,6 +63,21 @@ For normal use, open `tools/ABVx Companion.app` from Finder. The lightweight app
 - USB serial port state.
 - Firmware version when available.
 - Synchronize time.
+
+### Export status
+
+- Constant local backup is maintained in `~/ABVxCompanionBackup`:
+  - `Tracks/`
+  - `Notes/`
+  - `Voice/`
+  - `.state/sync-status.json`
+- The UI exposes **Last / Pending / Failed / Done** state for:
+  - Tracks (import)
+  - Notes (pull)
+  - Voice (pull)
+- This is non-invasive to firmware and keeps local visibility of recovery operations.
+- Notes and Voice pulls support optional post-sync cleanup (`delete_after`) from the same file system transaction.
+- Sync panel has a compact heartbeat marker showing when any sync is actively in pending state.
 
 ### Firmware
 
@@ -64,6 +107,17 @@ For normal use, open `tools/ABVx Companion.app` from Finder. The lightweight app
 - Export Notes, Voice, Timeline, and Habit logs.
 - Import prepared content.
 - Destructive operations require confirmation.
+
+## Maintenance policy
+
+When the device is connected for firmware maintenance:
+
+1. Detect mounted SD and available device transport.
+2. Offer backup/export of user data first.
+3. Prefer offloading internal Voice recordings before any cleanup or reflash.
+4. Only then allow cleanup, rebuild, or flash.
+
+This matters because mounted-SD access alone does not include internal `/voice` storage. A pure SD workflow can back up the removable card, but it cannot preserve voice notes without a device-side export path.
 
 ## Product constraints
 

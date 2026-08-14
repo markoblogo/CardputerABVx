@@ -8,6 +8,7 @@ import io
 import json
 import os
 import secrets
+import datetime
 import shlex
 import subprocess
 import tempfile
@@ -23,10 +24,55 @@ import abvx_companion as core
 PROJECT_ROOT = Path(os.environ.get("ABVX_PROJECT_ROOT", Path(__file__).resolve().parent.parent)).expanduser().resolve()
 UI_FILE = Path(__file__).resolve().parent / "companion_ui" / "index.html"
 IDF_EXPORT = Path.home() / "esp/esp-idf-v5.4.2/export.sh"
+BACKUP_ROOT = Path.home() / "ABVxCompanionBackup"
+BACKUP_STATE = BACKUP_ROOT / ".state" / "sync-status.json"
+BACKUP_TRACKS = BACKUP_ROOT / "Tracks"
+BACKUP_NOTES = BACKUP_ROOT / "Notes"
+BACKUP_VOICE = BACKUP_ROOT / "Voice"
+TRACKS = "tracks"
+NOTES = "notes"
+VOICE = "voice"
 MAX_IMPORT_BYTES = 128 * 1024 * 1024
+MAX_JOB_OUTPUT = 24000
 IMPORT_EXTENSIONS = {"book": {".txt", ".epub", ".fb2"}, "music": {".mp3"}}
+SYNC_KEYS = (TRACKS, NOTES, VOICE)
 IMPORT_LOCK = threading.Lock()
 SD_OVERRIDE = None
+
+
+def now_stamp():
+    return datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def ensure_backup_catalog():
+    for path in (BACKUP_TRACKS, BACKUP_NOTES, BACKUP_VOICE, BACKUP_STATE.parent):
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def default_sync_state():
+    return {key: {"state": "IDLE", "last_sync": None, "last_file": "", "last_error": ""}
+            for key in SYNC_KEYS}
+
+
+def load_sync_state():
+    if not BACKUP_STATE.is_file():
+        return default_sync_state()
+    try:
+        data = json.loads(BACKUP_STATE.read_text(encoding="utf-8"))
+    except Exception:
+        return default_sync_state()
+    result = default_sync_state()
+    for key in SYNC_KEYS:
+        value = data.get(key) if isinstance(data, dict) else None
+        if isinstance(value, dict):
+            for field in result[key]:
+                result[key][field] = value.get(field, result[key][field])
+    return result
+
+
+def save_sync_state(state):
+    data = json.dumps(state, ensure_ascii=False, indent=2)
+    BACKUP_STATE.write_text(data, encoding="utf-8")
 
 
 class AppState:
@@ -37,12 +83,52 @@ class AppState:
         self.job_state = "IDLE"
         self.job_returncode = None
         self.job_output = deque(maxlen=240)
+        self.job_queue = deque(maxlen=10)
+        self.sync = load_sync_state()
 
     def snapshot(self):
         with self.lock:
-            return {"name": self.job_name, "state": self.job_state,
-                    "returncode": self.job_returncode,
-                    "output": "".join(self.job_output)[-24000:]}
+            return {
+                "name": self.job_name,
+                "state": self.job_state,
+                "returncode": self.job_returncode,
+                "output": "".join(self.job_output)[-MAX_JOB_OUTPUT:],
+                "queue": list(self.job_queue),
+                "sync": {k: v.copy() for k, v in self.sync.items()},
+            }
+
+    def set_sync(self, key, state, *, last_file="", last_error="", done=False):
+        if key not in SYNC_KEYS:
+            return
+        with self.lock:
+            entry = self.sync.setdefault(key, {"state": "IDLE", "last_sync": None, "last_file": "", "last_error": ""})
+            normalized_state = str(state).strip().upper()
+            if normalized_state in ("DONE", "FAILED", "PENDING", "IDLE"):
+                entry["state"] = normalized_state
+            else:
+                entry["state"] = state
+            if last_file:
+                entry["last_file"] = last_file
+            if normalized_state == "FAILED":
+                entry["last_error"] = "operation failed"
+                if last_error:
+                    entry["last_error"] = last_error
+            elif last_error:
+                entry["last_error"] = last_error
+            elif normalized_state in ("DONE", "IDLE"):
+                entry["last_error"] = ""
+            if done:
+                entry["last_sync"] = now_stamp()
+            save_sync_state(self.sync)
+
+    def set_sync_fail(self, key, *, last_file="", last_error=""):
+        self.set_sync(key, "FAILED", last_file=last_file, done=True, last_error=last_error)
+
+    def set_sync_pending(self, key, *, last_file=""):
+        self.set_sync(key, "PENDING", last_file=last_file, done=False, last_error="")
+
+    def set_sync_done(self, key, *, last_file="", last_error=""):
+        self.set_sync(key, "DONE", last_file=last_file, done=True, last_error=last_error)
 
     def start(self, name, command):
         with self.lock:
@@ -51,6 +137,11 @@ class AppState:
             self.job_name, self.job_state, self.job_returncode = name, "RUNNING", None
             self.job_output.clear()
             self.job_output.append(f"{name} started\n")
+            self.job_queue.append({
+                "name": name,
+                "state": "RUNNING",
+                "returncode": None
+            })
         threading.Thread(target=self._run, args=(command,), daemon=True).start()
 
     def _run(self, command):
@@ -69,6 +160,9 @@ class AppState:
         with self.lock:
             self.job_returncode = returncode
             self.job_state = "DONE" if returncode == 0 else "FAILED"
+            if self.job_queue:
+                self.job_queue[-1]["state"] = self.job_state
+                self.job_queue[-1]["returncode"] = returncode
             self.job_output.append(f"{self.job_name} {self.job_state.lower()} ({returncode})\n")
 
 
@@ -79,11 +173,50 @@ def usb_ports():
     return sorted(set(glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/cu.usbserial*")))
 
 
+def safe_filename(name):
+    candidate = Path(name).name
+    if not candidate or candidate in {".", ".."}:
+        raise RuntimeError("filename is empty")
+    if any(ch in candidate for ch in "\\/"):
+        raise RuntimeError("invalid filename")
+    if candidate.startswith("."):
+        raise RuntimeError("dotfile is not supported")
+    if len(candidate) > 120:
+        raise RuntimeError("filename is too long")
+    return candidate
+
+
+
+def validate_import_request(kind, filename):
+    if kind not in IMPORT_EXTENSIONS:
+        raise RuntimeError("unsupported import type")
+    safe = safe_filename(filename)
+    ext = Path(safe).suffix.lower()
+    if ext not in IMPORT_EXTENSIONS[kind]:
+        allowed = ", ".join(sorted(IMPORT_EXTENSIONS[kind]))
+        raise RuntimeError(f"unsupported extension: {ext} (expected: {allowed})")
+    return safe
+
+def validate_payload_json(payload):
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid JSON payload")
+    return payload
+
+
 def device_status():
     result = {"sd": {"ready": False, "path": "", "error": "not detected"},
               "usb_ports": usb_ports(), "idf_ready": IDF_EXPORT.is_file(),
               "firmware": {"ready": False, "path": "", "size": 0},
               "job": STATE.snapshot()}
+    result["backup"] = {
+        "ready": BACKUP_ROOT.is_dir(),
+        "path": str(BACKUP_ROOT),
+        "tracks": len([path for path in BACKUP_TRACKS.iterdir() if path.is_file() and not path.name.startswith(".")]) if BACKUP_TRACKS.is_dir() else 0,
+        "notes": len([path for path in BACKUP_NOTES.iterdir() if path.is_file() and not path.name.startswith(".")]) if BACKUP_NOTES.is_dir() else 0,
+        "voice": len([path for path in BACKUP_VOICE.iterdir() if path.is_file() and not path.name.startswith(".")]) if BACKUP_VOICE.is_dir() else 0,
+    }
+    with STATE.lock:
+        result["sync"] = dict(STATE.sync)
     firmware = PROJECT_ROOT / "build/cardputer-abvx-minimal.bin"
     if firmware.is_file():
         result["firmware"] = {"ready": True, "path": str(firmware), "size": firmware.stat().st_size}
@@ -98,6 +231,10 @@ def device_status():
                         "notes": len(core.visible_files(sd / "notes", ".txt")), "error": ""}
     except Exception as exc:
         result["sd"]["error"] = str(exc)
+    job_running = result["job"]["state"] == "RUNNING"
+    result["ready_build"] = IDF_EXPORT.is_file() and not job_running
+    result["ready_flash"] = bool(result["usb_ports"]) and result["ready_build"] and not job_running
+    result["ready_import"] = result["sd"]["ready"] and not job_running
     return result
 
 
@@ -137,7 +274,11 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length < 0 or length > 4096:
             raise RuntimeError("request body too large")
-        return json.loads(self.rfile.read(length) or b"{}")
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise RuntimeError("invalid JSON body")
 
     def do_GET(self):
         if not self._host_ok():
@@ -169,8 +310,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if route.path == "/api/import":
                 self._import_file(urllib.parse.parse_qs(route.query))
+            elif route.path == "/api/sync-notes":
+                payload = validate_payload_json(self._read_json())
+                self._sync_notes(delete_after=bool(payload.get("delete_after", False)))
+            elif route.path == "/api/sync-voice":
+                payload = validate_payload_json(self._read_json())
+                self._sync_voice(delete_after=bool(payload.get("delete_after", False)))
             elif route.path == "/api/time-sync":
-                payload, output = self._read_json(), io.StringIO()
+                payload = validate_payload_json(self._read_json())
+                if "url" in payload and not isinstance(payload["url"], str):
+                    raise RuntimeError("invalid URL type")
+                output = io.StringIO()
                 with contextlib.redirect_stdout(output):
                     core.sync_time(payload.get("url", "http://192.168.4.1"))
                 self._json(200, {"ok": True, "message": output.getvalue().strip() or "Time synchronized"})
@@ -180,12 +330,12 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.start("BUILD", idf_command("build"))
                 self._json(202, {"ok": True, "message": "Build started"})
             elif route.path == "/api/flash":
-                payload = self._read_json()
+                payload = validate_payload_json(self._read_json())
+                if payload.get("port") not in usb_ports():
+                    raise RuntimeError("selected USB port is not available")
                 port = payload.get("port", "")
                 if payload.get("confirm") is not True:
                     raise RuntimeError("flash confirmation required")
-                if port not in usb_ports():
-                    raise RuntimeError("selected USB port is not available")
                 if not IDF_EXPORT.is_file():
                     raise RuntimeError(f"ESP-IDF export not found: {IDF_EXPORT}")
                 STATE.start("FLASH", idf_command("flash", port))
@@ -201,9 +351,8 @@ class Handler(BaseHTTPRequestHandler):
             self._error(400, exc)
 
     def _import_file(self, query):
-        kind, filename = query.get("kind", [""])[0], Path(query.get("filename", [""])[0]).name
-        if kind not in IMPORT_EXTENSIONS or not filename or Path(filename).suffix.lower() not in IMPORT_EXTENSIONS[kind]:
-            raise RuntimeError("unsupported import type")
+        kind = query.get("kind", [""])[0]
+        filename = validate_import_request(kind, query.get("filename", [""])[0])
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > MAX_IMPORT_BYTES:
             raise RuntimeError("invalid file size")
@@ -211,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
             raise RuntimeError("another import is running")
         try:
             sd = core.resolve_sd(SD_OVERRIDE)
+            if not sd.is_dir():
+                raise RuntimeError(f"SD is not a directory: {sd}")
             with tempfile.TemporaryDirectory(prefix="abvx-import-") as directory:
                 source, remaining = Path(directory) / filename, length
                 with source.open("wb") as output:
@@ -222,10 +373,45 @@ class Handler(BaseHTTPRequestHandler):
                         remaining -= len(chunk)
                 log = io.StringIO()
                 with contextlib.redirect_stdout(log):
-                    core.add_books(sd, [str(source)]) if kind == "book" else core.add_music(sd, [str(source)])
-            self._json(200, {"ok": True, "message": log.getvalue().strip()})
+                    if kind == "music":
+                        STATE.set_sync_pending(TRACKS, last_file=filename)
+                    try:
+                        core.add_books(sd, [str(source)]) if kind == "book" else core.add_music(sd, [str(source)])
+                    except Exception:
+                        if kind == "music":
+                            STATE.set_sync_fail(TRACKS, last_file=filename)
+                        raise
+                    if kind == "music":
+                        STATE.set_sync_done(TRACKS, last_file=filename)
+                self._json(200, {"ok": True, "message": log.getvalue().strip()})
         finally:
             IMPORT_LOCK.release()
+
+    def _sync_notes(self, delete_after=False):
+        STATE.set_sync_pending(NOTES, last_file="pull")
+        try:
+            sd = core.resolve_sd(SD_OVERRIDE)
+            if not sd.is_dir():
+                raise RuntimeError(f"SD is not a directory: {sd}")
+            core.pull_notes(sd, BACKUP_NOTES, delete_after=delete_after)
+            STATE.set_sync_done(NOTES, last_file="pull")
+            self._json(200, {"ok": True, "message": "notes sync complete"})
+        except Exception as exc:
+            STATE.set_sync_fail(NOTES, last_file="pull", last_error=str(exc))
+            raise
+
+    def _sync_voice(self, delete_after=False):
+        STATE.set_sync_pending(VOICE, last_file="pull")
+        try:
+            sd = core.resolve_sd(SD_OVERRIDE)
+            if not sd.is_dir():
+                raise RuntimeError(f"SD is not a directory: {sd}")
+            core.pull_recordings(sd, BACKUP_VOICE, delete_after=delete_after)
+            STATE.set_sync_done(VOICE, last_file="pull")
+            self._json(200, {"ok": True, "message": "voice sync complete"})
+        except Exception as exc:
+            STATE.set_sync_fail(VOICE, last_file="pull", last_error=str(exc))
+            raise
 
     def log_message(self, format_string, *args):
         return
@@ -241,6 +427,8 @@ def main():
     SD_OVERRIDE = args.sd
     if not UI_FILE.is_file():
         raise SystemExit(f"ERROR: UI file missing: {UI_FILE}")
+    ensure_backup_catalog()
+    save_sync_state(STATE.sync)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     url = f"http://127.0.0.1:{args.port}"
     print(f"ABVx Companion: {url}\nPress Ctrl+C to stop.")
