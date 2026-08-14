@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(os.environ.get("ABVX_PROJECT_ROOT", Path(__file__).resolve()
 UI_FILE = Path(__file__).resolve().parent / "companion_ui" / "index.html"
 IDF_EXPORT = Path.home() / "esp/esp-idf-v5.4.2/export.sh"
 MAX_IMPORT_BYTES = 128 * 1024 * 1024
+MAX_JOB_OUTPUT = 24000
 IMPORT_EXTENSIONS = {"book": {".txt", ".epub", ".fb2"}, "music": {".mp3"}}
 IMPORT_LOCK = threading.Lock()
 SD_OVERRIDE = None
@@ -42,7 +43,7 @@ class AppState:
         with self.lock:
             return {"name": self.job_name, "state": self.job_state,
                     "returncode": self.job_returncode,
-                    "output": "".join(self.job_output)[-24000:]}
+                    "output": "".join(self.job_output)[-MAX_JOB_OUTPUT:]}
 
     def start(self, name, command):
         with self.lock:
@@ -79,6 +80,36 @@ def usb_ports():
     return sorted(set(glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/cu.usbserial*")))
 
 
+def safe_filename(name):
+    candidate = Path(name).name
+    if not candidate or candidate in {".", ".."}:
+        raise RuntimeError("filename is empty")
+    if any(ch in candidate for ch in "\\/"):
+        raise RuntimeError("invalid filename")
+    if candidate.startswith("."):
+        raise RuntimeError("dotfile is not supported")
+    if len(candidate) > 120:
+        raise RuntimeError("filename is too long")
+    return candidate
+
+
+
+def validate_import_request(kind, filename):
+    if kind not in IMPORT_EXTENSIONS:
+        raise RuntimeError("unsupported import type")
+    safe = safe_filename(filename)
+    ext = Path(safe).suffix.lower()
+    if ext not in IMPORT_EXTENSIONS[kind]:
+        allowed = ", ".join(sorted(IMPORT_EXTENSIONS[kind]))
+        raise RuntimeError(f"unsupported extension: {ext} (expected: {allowed})")
+    return safe
+
+def validate_payload_json(payload):
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid JSON payload")
+    return payload
+
+
 def device_status():
     result = {"sd": {"ready": False, "path": "", "error": "not detected"},
               "usb_ports": usb_ports(), "idf_ready": IDF_EXPORT.is_file(),
@@ -98,6 +129,10 @@ def device_status():
                         "notes": len(core.visible_files(sd / "notes", ".txt")), "error": ""}
     except Exception as exc:
         result["sd"]["error"] = str(exc)
+    job_running = result["job"]["state"] == "RUNNING"
+    result["ready_build"] = IDF_EXPORT.is_file() and not job_running
+    result["ready_flash"] = bool(result["usb_ports"]) and result["ready_build"] and not job_running
+    result["ready_import"] = result["sd"]["ready"] and not job_running
     return result
 
 
@@ -137,7 +172,11 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length < 0 or length > 4096:
             raise RuntimeError("request body too large")
-        return json.loads(self.rfile.read(length) or b"{}")
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise RuntimeError("invalid JSON body")
 
     def do_GET(self):
         if not self._host_ok():
@@ -170,7 +209,10 @@ class Handler(BaseHTTPRequestHandler):
             if route.path == "/api/import":
                 self._import_file(urllib.parse.parse_qs(route.query))
             elif route.path == "/api/time-sync":
-                payload, output = self._read_json(), io.StringIO()
+                payload = validate_payload_json(self._read_json())
+                if "url" in payload and not isinstance(payload["url"], str):
+                    raise RuntimeError("invalid URL type")
+                output = io.StringIO()
                 with contextlib.redirect_stdout(output):
                     core.sync_time(payload.get("url", "http://192.168.4.1"))
                 self._json(200, {"ok": True, "message": output.getvalue().strip() or "Time synchronized"})
@@ -180,12 +222,12 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.start("BUILD", idf_command("build"))
                 self._json(202, {"ok": True, "message": "Build started"})
             elif route.path == "/api/flash":
-                payload = self._read_json()
+                payload = validate_payload_json(self._read_json())
+                if payload.get("port") not in usb_ports():
+                    raise RuntimeError("selected USB port is not available")
                 port = payload.get("port", "")
                 if payload.get("confirm") is not True:
                     raise RuntimeError("flash confirmation required")
-                if port not in usb_ports():
-                    raise RuntimeError("selected USB port is not available")
                 if not IDF_EXPORT.is_file():
                     raise RuntimeError(f"ESP-IDF export not found: {IDF_EXPORT}")
                 STATE.start("FLASH", idf_command("flash", port))
@@ -201,9 +243,8 @@ class Handler(BaseHTTPRequestHandler):
             self._error(400, exc)
 
     def _import_file(self, query):
-        kind, filename = query.get("kind", [""])[0], Path(query.get("filename", [""])[0]).name
-        if kind not in IMPORT_EXTENSIONS or not filename or Path(filename).suffix.lower() not in IMPORT_EXTENSIONS[kind]:
-            raise RuntimeError("unsupported import type")
+        kind = query.get("kind", [""])[0]
+        filename = validate_import_request(kind, query.get("filename", [""])[0])
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > MAX_IMPORT_BYTES:
             raise RuntimeError("invalid file size")
@@ -211,6 +252,8 @@ class Handler(BaseHTTPRequestHandler):
             raise RuntimeError("another import is running")
         try:
             sd = core.resolve_sd(SD_OVERRIDE)
+            if not sd.is_dir():
+                raise RuntimeError(f"SD is not a directory: {sd}")
             with tempfile.TemporaryDirectory(prefix="abvx-import-") as directory:
                 source, remaining = Path(directory) / filename, length
                 with source.open("wb") as output:
