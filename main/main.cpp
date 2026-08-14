@@ -48,6 +48,8 @@ constexpr const char* MUSIC_DIR = "/sdcard/music";
 constexpr const char* MUSIC_INDEX_FILE = "/sdcard/music/INDEX.TXT";
 constexpr const char* BOOKS_DIR = "/sdcard/books";
 constexpr const char* NOTES_DIR = "/sdcard/notes";
+constexpr const char* ACTIVITIES_DIR = "/sdcard/activities";
+constexpr const char* ACTIVITIES_INDEX_FILE = "/sdcard/activities/INDEX.TXT";
 constexpr const char* INBOX_FILE = "/voice/INBOX.LOG";
 constexpr const char* INBOX_TMP_FILE = "/voice/INBOX.NEW";
 constexpr const char* RECORDINGS_DIR = "/sdcard/rec";
@@ -5828,9 +5830,11 @@ bool getQueryUint(httpd_req_t* req, const char* key, size_t* out)
     return true;
 }
 
+void sendHttpError(httpd_req_t* req, const char* endpoint, const char* reason, httpd_err_code_t code = HTTPD_400_BAD_REQUEST);
+
 bool isAllowedApiPath(const std::string& path)
 {
-    static const char* roots[] = {"/music", "/books", "/notes", "/rec", "/recs", "/cardputer"};
+    static const char* roots[] = {"/music", "/books", "/notes", "/rec", "/recs", "/cardputer", "/activities"};
     if (path == "/") return true;
     for (const char* root : roots) {
         size_t n = std::strlen(root);
@@ -5865,10 +5869,152 @@ bool apiPathToSdPath(const std::string& api_path, std::string* full_path, char* 
         *full_path = CONFIG_DIR;
     } else if (api_path.rfind("/cardputer/", 0) == 0) {
         *full_path = std::string(CONFIG_DIR) + api_path.substr(std::strlen("/cardputer"));
+    } else if (api_path.rfind("/activities", 0) == 0) {
+        *full_path = std::string(MOUNT_POINT) + api_path;
     } else {
         *full_path = std::string(MOUNT_POINT) + api_path;
     }
     return true;
+}
+
+static bool isSafeActivityId(const std::string& id)
+{
+    if (id.empty() || id.size() > 64) return false;
+    for (char c : id) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || c == '_' || c == '-' || c == '.' || c == ':') continue;
+        return false;
+    }
+    return true;
+}
+
+bool readActivityIndex(std::vector<std::string>* lines, char* err, size_t err_len)
+{
+    lines->clear();
+    if (!initSd()) {
+        snprintf(err, err_len, "no sd");
+        return false;
+    }
+    FILE* f = fopen(ACTIVITIES_INDEX_FILE, "rb");
+    if (!f) {
+        if (errno == ENOENT) {
+            err[0] = '\0';
+            return true;
+        }
+        snprintf(err, err_len, "%s", std::strerror(errno));
+        return false;
+    }
+    char buf[160] = {};
+    while (fgets(buf, sizeof(buf), f)) {
+        std::string line = buf;
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        if (line.empty()) continue;
+        lines->push_back(line);
+        if (lines->size() >= 500) break;
+    }
+    bool ok = ferror(f) == 0;
+    fclose(f);
+    if (!ok) {
+        snprintf(err, err_len, "read");
+        return false;
+    }
+    return true;
+}
+
+esp_err_t connectionActivitiesListHandler(httpd_req_t* req)
+{
+    ++connection_req_count;
+    const char* endpoint = "/api/activities";
+    setConnectionStatus(endpoint, "none");
+    std::vector<std::string> entries;
+    char err[64] = {};
+    if (!readActivityIndex(&entries, err, sizeof(err))) {
+        if (std::string(err) == "no sd") {
+            sendHttpError(req, endpoint, err, HTTPD_500_INTERNAL_SERVER_ERROR);
+            return ESP_OK;
+        }
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_sendstr(req, "OK ACTIVITIES\ncount=0\nEND\n");
+    }
+    httpd_resp_set_type(req, "text/plain");
+    char line[224];
+    snprintf(line, sizeof(line), "OK ACTIVITIES\ncount=%zu\n", entries.size());
+    httpd_resp_sendstr_chunk(req, line);
+    for (const auto& entry : entries) {
+        std::string id = entry.substr(0, entry.find('|'));
+        if (!id.empty()) {
+            snprintf(line, sizeof(line), "F %s\n", entry.c_str());
+            httpd_resp_sendstr_chunk(req, line);
+        }
+    }
+    httpd_resp_sendstr_chunk(req, "END\n");
+    httpd_resp_sendstr_chunk(req, nullptr);
+    return ESP_OK;
+}
+
+esp_err_t connectionActivityHandler(httpd_req_t* req)
+{
+    ++connection_req_count;
+    const char* endpoint = "/api/activity";
+    char query[224] = {};
+    char id_value[72] = {};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "id", id_value, sizeof(id_value)) != ESP_OK) {
+        sendHttpError(req, endpoint, "missing id");
+        return ESP_OK;
+    }
+    if (!isSafeActivityId(id_value)) {
+        sendHttpError(req, endpoint, "bad id");
+        return ESP_OK;
+    }
+    if (!initSd()) {
+        sendHttpError(req, endpoint, "no sd", HTTPD_500_INTERNAL_SERVER_ERROR);
+        return ESP_OK;
+    }
+    std::string id = id_value;
+    std::string path;
+    if (id.rfind('.', 0) == std::string::npos) {
+        path = std::string(ACTIVITIES_DIR) + "/" + id + ".JSON";
+        struct stat st = {};
+        if (stat(path.c_str(), &st) != 0) path = std::string(ACTIVITIES_DIR) + "/" + id + ".json";
+    } else {
+        path = std::string(ACTIVITIES_DIR) + "/" + id;
+    }
+    struct stat st = {};
+    if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        sendHttpError(req, endpoint, "not found", HTTPD_404_NOT_FOUND);
+        return ESP_OK;
+    }
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) {
+        sendHttpError(req, endpoint, "open", HTTPD_500_INTERNAL_SERVER_ERROR);
+        return ESP_OK;
+    }
+    setConnectionStatus(endpoint, "none");
+    httpd_resp_set_type(req, "application/octet-stream");
+    char header[96];
+    snprintf(header, sizeof(header), "attachment; filename=\"%.64s\"", baseName(path).c_str());
+    httpd_resp_set_hdr(req, "Content-Disposition", header);
+    uint8_t buf[1024];
+    bool ok = true;
+    while (true) {
+        size_t n = fread(buf, 1, sizeof(buf), f);
+        if (n > 0 && httpd_resp_send_chunk(req, reinterpret_cast<const char*>(buf), n) != ESP_OK) {
+            ok = false;
+            break;
+        }
+        if (n < sizeof(buf)) {
+            if (ferror(f)) ok = false;
+            break;
+        }
+    }
+    fclose(f);
+    if (!ok) {
+        sendHttpError(req, endpoint, "send/read failed", HTTPD_500_INTERNAL_SERVER_ERROR);
+    } else {
+        httpd_resp_send_chunk(req, nullptr, 0);
+    }
+    return ESP_OK;
 }
 
 bool isSafe83Name(const std::string& name)
@@ -6014,7 +6160,7 @@ bool prepareUploadPath(const std::string& api_path, std::string* full_path, std:
     return ensureUploadParent(*parent_api, parent_full, err, err_len);
 }
 
-void sendHttpError(httpd_req_t* req, const char* endpoint, const char* reason, httpd_err_code_t code = HTTPD_400_BAD_REQUEST)
+void sendHttpError(httpd_req_t* req, const char* endpoint, const char* reason, httpd_err_code_t code)
 {
     setConnectionStatus(endpoint, reason);
     httpd_resp_set_type(req, "text/plain");
@@ -6568,7 +6714,7 @@ esp_err_t connectionListHandler(httpd_req_t* req)
     httpd_resp_sendstr_chunk(req, line);
 
     if (api_path == "/") {
-        static const char* roots[] = {"music", "books", "notes", "rec", "cardputer"};
+        static const char* roots[] = {"music", "books", "notes", "rec", "cardputer", "activities"};
         for (const char* root : roots) {
             snprintf(line, sizeof(line), "D 0 %s\n", root);
             httpd_resp_sendstr_chunk(req, line);
@@ -7006,6 +7152,8 @@ bool startConnectionHttp(char* err, size_t err_len)
     if (!reg("/api/time-sync", HTTP_POST, connectionTimeSyncHandler)) return false;
     if (!reg("/api/list", HTTP_GET, connectionListHandler)) return false;
     if (!reg("/api/download", HTTP_GET, connectionDownloadHandler)) return false;
+    if (!reg("/api/activities", HTTP_GET, connectionActivitiesListHandler)) return false;
+    if (!reg("/api/activity", HTTP_GET, connectionActivityHandler)) return false;
     if (!reg("/api/write-test", HTTP_GET, connectionWriteTestHandler)) return false;
     if (!reg("/api/write-test", HTTP_POST, connectionWriteTestHandler)) return false;
     if (!reg("/api/upload", HTTP_POST, connectionUploadHandler)) return false;
