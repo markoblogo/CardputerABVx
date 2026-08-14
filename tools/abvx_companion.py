@@ -587,16 +587,21 @@ def push_notes(sd, source_dir):
     print(f"OK NOTES PUSH pushed={pushed}")
 
 
-def pull_notes(sd, destination_dir):
+def pull_notes(sd, destination_dir, delete_after=False):
     destination_dir = Path(destination_dir).expanduser().resolve()
     destination_dir.mkdir(parents=True, exist_ok=True)
     pulled = 0
+    deleted = 0
     for source in sorted(visible_files(sd / "notes", ".txt"), key=lambda path: path.name.casefold()):
         atomic_copy(source, destination_dir / source.name) if not (destination_dir / source.name).exists() else \
             atomic_replace_text(destination_dir / source.name, source.read_text(encoding="utf-8", errors="replace"))
         pulled += 1
         print(f"PULL NOTE {source.name}")
-    print(f"OK NOTES PULL pulled={pulled}")
+        if delete_after:
+            source.unlink()
+            deleted += 1
+            print(f"DELETE NOTE {source.name}")
+    print(f"OK NOTES PULL pulled={pulled} deleted={deleted}")
 
 
 def pull_recordings(sd, destination_dir, delete_after=False):

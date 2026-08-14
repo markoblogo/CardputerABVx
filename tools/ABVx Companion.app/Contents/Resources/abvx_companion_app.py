@@ -393,7 +393,7 @@ class Handler(BaseHTTPRequestHandler):
             sd = core.resolve_sd(SD_OVERRIDE)
             if not sd.is_dir():
                 raise RuntimeError(f"SD is not a directory: {sd}")
-            core.pull_notes(sd, BACKUP_NOTES)
+            core.pull_notes(sd, BACKUP_NOTES, delete_after=delete_after)
             STATE.set_sync_done(NOTES, last_file="pull")
             self._json(200, {"ok": True, "message": "notes sync complete"})
         except Exception as exc:

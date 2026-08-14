@@ -76,6 +76,8 @@ For normal use, open `tools/ABVx Companion.app` from Finder. The lightweight app
   - Notes (pull)
   - Voice (pull)
 - This is non-invasive to firmware and keeps local visibility of recovery operations.
+- Notes and Voice pulls support optional post-sync cleanup (`delete_after`) from the same file system transaction.
+- Sync panel has a compact heartbeat marker showing when any sync is actively in pending state.
 
 ### Firmware
 

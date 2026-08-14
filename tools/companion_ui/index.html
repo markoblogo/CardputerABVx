@@ -29,6 +29,11 @@ button,input,select{font:inherit}
 .stats{display:flex;gap:24px;margin-top:12px}.stat b{display:block;font-size:18px}.stat span{font-size:9px;color:var(--muted)}
 .device-lines{display:grid;gap:10px;align-content:center}.device-line{display:flex;justify-content:space-between;border-bottom:1px dashed #283029;padding-bottom:8px;font-size:11px}.device-line span{color:var(--muted)}
 .sync-row{display:grid;grid-template-columns:1fr auto;gap:12px;padding:7px 0;border-bottom:1px dashed #273027;font-size:10px}.sync-title{font-size:10px;color:var(--muted)}.sync-meta{font-size:9px;color:var(--muted);margin-top:3px}.sync-state{min-width:84px;text-align:right;color:var(--acid)}
+.sync-heartbeat{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px;border:1px dashed #2c3830;margin-bottom:10px;font-size:9px;color:var(--muted)}
+.sync-heartbeat .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);box-shadow:0 0 10px transparent;display:inline-block}
+.sync-heartbeat .dot.active{background:var(--acid);box-shadow:0 0 10px #b8ff465e;animation:beat 1s infinite alternate}
+.sync-heartbeat .state{color:var(--text)}
+@keyframes beat{from{transform:scale(1)}to{transform:scale(1.35)}}
 .sync-list{min-height:68px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
 .card{border:1px solid var(--line);background:#0d120ff0;padding:20px;min-height:220px;position:relative}
@@ -117,10 +122,15 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
         <span class="tag">BACKUP</span>
         <h2>Export status</h2>
         <p>Track, notes, and voice sync health with last operation markers.</p>
+        <div class="sync-heartbeat"><span>SYNC HEARTBEAT <span id="syncHeartbeatState" class="state">--</span></span><span class="dot" id="syncHeartbeatDot"></span></div>
         <div id="syncPanel" class="sync-list">Loading sync state…</div>
         <div class="actions" style="margin-top:12px">
           <button id="syncNotesBtn" class="btn">SYNC NOTES</button>
           <button id="syncVoiceBtn" class="btn">SYNC VOICE</button>
+        </div>
+        <div class="device-line" style="margin-top:10px; gap:10px;display:flex;align-items:center;flex-wrap:wrap;">
+          <label><input type="checkbox" id="deleteNotesAfter"/> Delete notes from card after sync</label>
+          <label><input type="checkbox" id="deleteVoiceAfter"/> Delete voice from card after sync</label>
         </div>
       </article>
       <article class="card">
@@ -194,6 +204,7 @@ const TOKEN = "__ABVX_TOKEN__";
 const $ = id => document.getElementById(id);
 let latest = null;
 let toastTimer = null;
+let syncPollingState = "IDLE";
 
 const fmt = n => {
   if (!n && n !== 0) return "0B";
@@ -243,6 +254,21 @@ function log(line) {
 function renderSyncPanel() {
   if (!latest) return;
   const sync = latest.sync || {};
+  const tracks = sync.tracks || {};
+  const notes = sync.notes || {};
+  const voice = sync.voice || {};
+  const states = [tracks, notes, voice].map(item => String((item.state || "IDLE")).toUpperCase());
+  const isPending = states.includes("PENDING") || states.includes("RUNNING");
+  syncPollingState = isPending ? "polling" : "idle";
+  const dot = $("syncHeartbeatDot");
+  if (dot) {
+    dot.classList.toggle("active", isPending);
+  }
+  const heartbeat = $("syncHeartbeatState");
+  if (heartbeat) {
+    heartbeat.textContent = isPending ? `polling ${new Date().toLocaleTimeString()}` : "idle";
+  }
+
   const row = (key, label) => {
     const item = sync[key] || {};
     const state = String(item.state || "IDLE").toUpperCase();
@@ -254,11 +280,16 @@ function renderSyncPanel() {
   $("syncPanel").innerHTML = `${row("tracks", "Tracks")}${row("notes", "Notes")}${row("voice", "Voice")}`;
 }
 
-async function triggerSync(kind) {
+function safeBool(v) {
+  return !!v;
+}
+
+async function triggerSync(kind, options = {}) {
   const endpoints = { notes: "/api/sync-notes", voice: "/api/sync-voice" };
   const path = endpoints[kind];
   if (!path) throw new Error("Unsupported sync kind");
-  const data = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const payload = { delete_after: safeBool(options.delete_after) };
+  const data = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   log(data.message || `${kind} sync complete`);
   toast(data.message || "Sync complete");
   await refresh();
@@ -365,7 +396,6 @@ async function refresh() {
 
     applyActionState();
     updateQueuePanel();
-  log(`status: job=${latest.job.state}, ready_import=${latest.ready_import ? 'yes' : 'no'}`);
   renderSyncPanel();
   } catch (e) { toast(e.message, true); }
 }
@@ -420,7 +450,7 @@ async function imports(kind, files) {
 function setupSyncButtons() {
   $("syncNotesBtn").onclick = async () => {
     try {
-      const data = await triggerSync("notes");
+      const data = await triggerSync("notes", { delete_after: $("deleteNotesAfter").checked });
       await refresh();
       log(data?.message || "Notes sync done");
     } catch (error) {
@@ -429,7 +459,7 @@ function setupSyncButtons() {
   };
   $("syncVoiceBtn").onclick = async () => {
     try {
-      const data = await triggerSync("voice");
+      const data = await triggerSync("voice", { delete_after: $("deleteVoiceAfter").checked });
       await refresh();
       log(data?.message || "Voice sync done");
     } catch (error) {
