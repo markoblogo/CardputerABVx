@@ -20,6 +20,7 @@ ABVx is an offline-first Cardputer ADV Pocket OS for fast capture, memory, readi
 - Mac Companion Core v0.2: dependency-free direct-SD status/init, MP3 validation/import, TXT/EPUB/FB2 conversion to Reader UTF-8, metadata index, and unified clock sync.
 - Companion product direction: replace routine Terminal work with a local Mac UI for device status, drag/drop content preparation, one-button build/flash, files, and time sync; package as `.app` after workflows stabilize.
 - Mac Companion UI v0.1: localhost-only dashboard with automatic SD/USB detection, drag/drop Books/Music, Time Sync, background Build, confirmed Flash, progress, and operation log.
+- Current content workflow contract: Mac source library -> prepared `CardP SD Mirror` -> mounted SD. Safe filenames and indexes belong in the prepared mirror, not in the source library.
 
 ## Product reframing
 
@@ -48,6 +49,7 @@ The apps are no longer the top-level product idea. They are implementation modul
 - Reader Cyrillic is custom/best-effort; French/Ukrainian polish is postponed.
 - Connections v3 is ready for controlled large-transfer hardware testing.
 - Voice and Inbox use the dedicated internal SPIFFS partition. SD remains the bulk user-content store.
+- Because Voice data is internal, Companion maintenance/reflash flow should treat recording offload as a first-class preflash step, not as optional SD cleanup.
 - Inbox/Timeline persists the newest 64 confirmed events and writes only from the main loop on safe idle screens.
 
 ## Architecture

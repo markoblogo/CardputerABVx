@@ -153,6 +153,18 @@ This conversion is optional: current firmware can open UTF-8 FAT long filenames 
 
 Optional preparation stores tracks as FAT-safe `M001.MP3`, `M002.MP3`, etc. Transliterated display titles are kept in `INDEX.TXT`. Native Cyrillic/Hebrew filenames can also be displayed and played directly. Shuffle walks one complete shuffled playlist before any track repeats.
 
+Recommended workflow is now:
+
+- Keep a human-friendly Mac source library such as `~/Downloads/Cardputer Local`.
+- Put original files into `Music Source` and `Books Source`.
+- Build a prepared runtime mirror under `Exports/CardP SD Mirror`.
+- Copy only the prepared mirror to the mounted SD.
+
+In other words:
+
+- Mac = source of truth
+- SD = prepared runtime copy for Cardputer
+
 ## Mac Companion Core
 
 The first Companion layer works directly with a mounted SD and uses only the Python standard library:
@@ -166,6 +178,12 @@ python3 tools/abvx_companion.py sync-time
 ```
 
 When exactly one mounted volume already contains at least two ABVx folders, `--sd` may be omitted. Music is validated and stored as `Mxxx.MP3` with its original UTF-8 title in `INDEX.TXT`. TXT, EPUB, and FB2 books are converted to Reader-compatible UTF-8 `Bxxxx.TXT`; EPUB follows its package spine, while FB2 follows body sections. `BOOKS.IDX` preserves title, source format, and author. PDF remains intentionally unsupported. Files are copied through temporary files and renamed only after flush.
+
+Operational policy for maintenance/reflash:
+
+- Before cleanup or firmware reflash, Companion should first offer an export/offload step for user data.
+- Voice recordings stored in internal `/voice` are higher priority than SD cleanup because they are not preserved by simply mounting the SD card on macOS.
+- SD-only workflows can back up `music`, `books`, `notes`, and other mounted folders, but they cannot capture internal `/voice` data without a device-side export path.
 
 Launch the local Companion UI:
 
