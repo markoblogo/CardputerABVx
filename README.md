@@ -165,6 +165,15 @@ In other words:
 - Mac = source of truth
 - SD = prepared runtime copy for Cardputer
 
+Host-only pipeline (no flash/debugging needed):
+
+```sh
+python3 tools/cardputer_local_pipeline.py init
+python3 tools/cardputer_local_pipeline.py sync-music --deploy --sd /Volumes/CARDPUTER
+python3 tools/cardputer_local_pipeline.py sync-books --deploy --sd /Volumes/CARDPUTER
+python3 tools/cardputer_local_pipeline.py status
+```
+
 ## Mac Companion Core
 
 The first Companion layer works directly with a mounted SD and uses only the Python standard library:

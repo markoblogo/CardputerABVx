@@ -30,6 +30,18 @@ Mac UI
 
 `tools/abvx_companion.py` is the first reusable core, not the final user interface. Conversion, validation, naming, indexing, and transport must remain separate so the same operations can be called from CLI, local web UI, or a packaged macOS app.
 
+For host-only staging use:
+
+`tools/cardputer_local_pipeline.py`
+
+It implements a repeatable source->mirror->deploy flow:
+
+- `init` creates `Cardputer Local` source/mirror folders
+- `sync-music` rebuilds prepared music mirror (with `INDEX.TXT`)
+- `sync-books` rebuilds prepared books mirror (with `BOOKS.IDX`)
+- `sync-all` rebuilds both sections
+- optional `--deploy --sd /Volumes/NAME` pushes section mirrors directly to SD
+
 ## Recommended delivery path
 
 1. Local Companion UI bound only to `127.0.0.1` (implemented in v0.1).
