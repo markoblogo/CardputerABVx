@@ -21,6 +21,21 @@ MAX_BOOK_BYTES = 64 * 1024 * 1024
 MAX_BOOK_TEXT_CHARS = 16 * 1024 * 1024
 MAX_EPUB_MEMBER_BYTES = 8 * 1024 * 1024
 
+CYRILLIC = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "ґ": "g", "д": "d", "е": "e", "ё": "yo", "є": "ye", "ж": "zh", "з": "z",
+    "и": "i", "і": "i", "ї": "yi", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+    "с": "s", "т": "t", "у": "u", "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y",
+    "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    "А": "A", "Б": "B", "В": "V", "Г": "G", "Ґ": "G", "Д": "D", "Е": "E", "Ё": "Yo", "Є": "Ye", "Ж": "Zh", "З": "Z",
+    "И": "I", "І": "I", "Ї": "Yi", "Й": "Y", "К": "K", "Л": "L", "М": "M", "Н": "N", "О": "O", "П": "P", "Р": "R",
+    "С": "S", "Т": "T", "У": "U", "Ф": "F", "Х": "Kh", "Ц": "Ts", "Ч": "Ch", "Ш": "Sh", "Щ": "Sch", "Ъ": "", "Ы": "Y",
+    "Ь": "", "Э": "E", "Ю": "Yu", "Я": "Ya",
+}
+HEBREW = {
+    "א": "a", "ב": "b", "ג": "g", "ד": "d", "ה": "h", "ו": "v", "ז": "z", "ח": "kh", "ט": "t", "י": "y", "כ": "k", "ך": "k",
+    "ל": "l", "מ": "m", "ם": "m", "נ": "n", "ן": "n", "ס": "s", "ע": "a", "פ": "p", "ף": "p", "צ": "ts", "ץ": "ts",
+    "ק": "k", "ר": "r", "ש": "sh", "ת": "t",
+}
 
 def volume_score(path):
     return sum((path / name).is_dir() for name in LAYOUT)
@@ -199,6 +214,31 @@ def sanitize_title(name):
     return title[:160] or "Untitled"
 
 
+def ascii_index_title(name):
+    if not name:
+        return "Untitled"
+    title = ""
+    for char in str(name):
+        mapped = CYRILLIC.get(char)
+        if mapped is not None:
+            title += mapped
+            continue
+        mapped = HEBREW.get(char)
+        if mapped is not None:
+            title += mapped
+            continue
+        normalized = unicodedata.normalize("NFKD", char)
+        ascii_part = normalized.encode("ascii", "ignore").decode("ascii")
+        if ascii_part:
+            title += ascii_part
+            continue
+        if char.isspace():
+            title += " "
+        elif char in "-_()":
+            title += char
+    return " ".join(title.replace("|", " ").split())[:160] or "Untitled"
+
+
 def default_music_source(root):
     return local_root(root) / "Music Source"
 
@@ -315,7 +355,7 @@ def add_music(sd, sources):
             raise RuntimeError(f"not an MP3 file: {source}")
         if source.stat().st_size <= 0 or not has_mp3_sync(source):
             raise RuntimeError(f"MP3 validation failed: {source.name}")
-        title = sanitize_title(source.name)
+        title = ascii_index_title(source.stem)
         if title.casefold() in known_titles:
             print(f"SKIP {source.name}: title already present")
             continue
@@ -604,7 +644,8 @@ def write_book_index(directory, stored, title, source_format, author):
         entries = [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
                    if line and not line.upper().startswith(stored.upper() + "|")]
     clean_author = " ".join(author.replace("|", " ").split())[:160]
-    entries.append(f"{stored}|{sanitize_title(title)}|{source_format}|{clean_author}")
+    index_title = ascii_index_title(title)
+    entries.append(f"{stored}|{index_title}|{source_format}|{clean_author}")
     temporary = directory / "BOOKS.NEW"
     with temporary.open("w", encoding="utf-8", newline="\n") as output:
         output.write("\n".join(entries) + "\n")
