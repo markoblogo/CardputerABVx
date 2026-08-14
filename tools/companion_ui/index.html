@@ -1,37 +1,225 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ABVx Companion</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ABVx Companion</title>
 <style>
-:root{--bg:#070908;--panel:#0d120f;--line:#29322d;--text:#edf5ef;--muted:#87958c;--acid:#b8ff46;--bad:#ff5d57;--shadow:0 24px 60px #0008}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 72% -20%,#213021 0,transparent 38%),linear-gradient(135deg,#050706,#0a0e0b 60%,#060807);color:var(--text);font-family:Monaco,"Courier New",monospace;min-height:100vh}body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.07;background:repeating-linear-gradient(0deg,transparent 0 3px,#d6ffe3 4px)}button,input,select{font:inherit}.shell{min-height:100vh;display:grid;grid-template-columns:248px 1fr}.rail{padding:28px 22px;border-right:1px solid var(--line);background:#060907dd;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}.brand{font-size:25px;font-weight:900;letter-spacing:.18em}.brand span{color:var(--acid)}.version{font-size:10px;color:var(--muted);margin-top:7px}.nav{margin-top:48px;display:grid;gap:8px}.nav a{color:var(--muted);text-decoration:none;padding:10px 12px;border-left:2px solid transparent;font-size:12px}.nav a:hover,.nav a.active{color:var(--text);border-color:var(--acid);background:#111713}.rail-state{margin-top:auto;border:1px solid var(--line);padding:14px;background:#0b100d}.led{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 12px currentColor;margin-right:8px}.led.ok{background:var(--acid)}.tiny{font-size:10px;color:var(--muted);line-height:1.6}.main{padding:38px clamp(24px,4vw,68px) 60px;max-width:1440px;width:100%;margin:auto}.top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px}.eyebrow{font-size:10px;color:var(--acid);letter-spacing:.18em;text-transform:uppercase}.top h1{font-size:34px;margin:6px 0 0;letter-spacing:-.04em}.clock{font-size:12px;color:var(--muted)}.hero{border:1px solid var(--line);background:linear-gradient(120deg,#151d17f5,#090d0af5);padding:24px;box-shadow:var(--shadow);position:relative;overflow:hidden}.hero:after{content:"SD / USB / IDF";position:absolute;right:18px;top:15px;color:#3d4a41;font-size:10px;letter-spacing:.15em}.hero-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:28px}.status-title{font-size:22px;font-weight:800}.mark{color:var(--acid)}.path{color:var(--muted);font-size:11px;margin:8px 0 20px;overflow:hidden;text-overflow:ellipsis}.capacity{height:8px;border:1px solid #344138;background:#060806;padding:1px}.capacity i{display:block;height:100%;width:0;background:var(--acid);box-shadow:0 0 15px #b8ff4673;transition:width .4s}.stats{display:flex;gap:24px;margin-top:12px}.stat b{display:block;font-size:18px}.stat span{font-size:9px;color:var(--muted)}.device-lines{display:grid;gap:10px;align-content:center}.device-line{display:flex;justify-content:space-between;border-bottom:1px dashed #283029;padding-bottom:8px;font-size:11px}.device-line span{color:var(--muted)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.card{border:1px solid var(--line);background:#0d120ff0;padding:20px;min-height:220px;position:relative}.card h2{font-size:14px;margin:0 0 4px;letter-spacing:.08em}.card p{font-size:10px;color:var(--muted);line-height:1.55;margin:0 0 16px}.tag{position:absolute;right:14px;top:14px;font-size:9px;color:var(--acid);border:1px solid #405333;padding:4px 7px}.drop{border:1px dashed #405046;min-height:112px;display:grid;place-items:center;text-align:center;padding:20px;cursor:pointer;transition:.18s;background:#090d0a}.drop:hover,.drop.drag{border-color:var(--acid);background:#10180e;transform:translateY(-2px)}.drop.locked{pointer-events:none;opacity:.45;filter:grayscale(55%)}.drop strong{display:block;font-size:13px;margin-bottom:6px}.drop small{font-size:9px;color:var(--muted)}.drop input{display:none}.actions{display:flex;gap:9px;flex-wrap:wrap}.btn{border:1px solid #3b493f;background:#111813;color:var(--text);padding:10px 13px;font-size:10px;cursor:pointer;text-transform:uppercase}.btn:hover:not(:disabled){border-color:var(--acid);color:var(--acid)}.btn.primary{background:var(--acid);border-color:var(--acid);color:#0a0d0a;font-weight:900}.btn.danger{border-color:#663936;color:#ff8d88}.btn:disabled{opacity:.35;cursor:not-allowed}select{background:#080c09;color:var(--text);border:1px solid var(--line);padding:10px;min-width:210px;max-width:100%}.progress{height:5px;background:#080b09;margin-top:14px;overflow:hidden;display:none}.progress.show{display:block}.progress i{display:block;height:100%;width:0;background:var(--acid);transition:width .15s}.progress.busy i{width:35%;animation:scan 1.2s infinite ease-in-out}@keyframes scan{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}.log{grid-column:1/-1;min-height:160px}.terminal{background:#050705;border:1px solid #222a25;padding:14px;height:120px;overflow:auto;white-space:pre-wrap;font-size:10px;line-height:1.55;color:#b9c5bd}.toast{position:fixed;right:24px;bottom:24px;max-width:420px;background:#111813;border:1px solid var(--acid);padding:13px 16px;font-size:11px;box-shadow:var(--shadow);transform:translateY(100px);opacity:0;transition:.25s;z-index:20}.toast.show{transform:none;opacity:1}.toast.bad{border-color:var(--bad)}dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;box-shadow:0 35px 100px #000;max-width:480px}dialog::backdrop{background:#000c}.modal{padding:24px}.modal h3{margin:0 0 12px;color:#ff918b}.modal p{font-size:11px;color:var(--muted);line-height:1.6}.modal code{color:var(--text)}.modal .actions{justify-content:flex-end;margin-top:22px}@media(max-width:900px){.shell{grid-template-columns:1fr}.rail{height:auto;position:relative;border-right:0;border-bottom:1px solid var(--line);padding:18px 22px}.nav{display:none}.rail-state{position:absolute;right:18px;top:12px;margin:0}.main{padding:24px 16px}.hero-grid,.grid{grid-template-columns:1fr}.top h1{font-size:27px}.clock{display:none}.log{grid-column:auto}}
-</style></head><body><div class="shell"><aside class="rail"><div class="brand">ABV<span>x</span></div><div class="version">MAC COMPANION / 0.1</div><nav class="nav"><a class="active" href="#device">01 DEVICE</a><a href="#content">02 CONTENT</a><a href="#firmware">03 FIRMWARE</a><a href="#activity">04 ACTIVITY</a></nav><div class="rail-state"><div><i id="railLed" class="led"></i><span id="railLabel">SCANNING</span></div><div id="railPath" class="tiny">Looking for ABVx SD...</div></div></aside><main class="main"><header class="top"><div><div class="eyebrow">Pocket OS control surface</div><h1>Device command deck</h1></div><div id="localClock" class="clock"></div></header><section id="device" class="hero"><div class="hero-grid"><div><div id="sdTitle" class="status-title"><span class="mark">●</span> Detecting storage</div><div id="sdPath" class="path">/Volumes/...</div><div class="capacity"><i id="capacityBar"></i></div><div class="stats"><div class="stat"><b id="freeValue">--</b><span>FREE</span></div><div class="stat"><b id="musicCount">--</b><span>TRACKS</span></div><div class="stat"><b id="bookCount">--</b><span>BOOKS</span></div><div class="stat"><b id="noteCount">--</b><span>NOTES</span></div></div></div><div class="device-lines"><div class="device-line"><span>USB PORT</span><b id="usbState">SCANNING</b></div><div class="device-line"><span>ESP-IDF</span><b id="idfState">SCANNING</b></div><div class="device-line"><span>FIRMWARE</span><b id="fwState">SCANNING</b></div><div class="device-line"><span>IMPORT READY</span><b id="importState">--</b></div><div class="actions"><button id="refreshBtn" class="btn">REFRESH</button><button id="timeBtn" class="btn primary">SYNC TIME</button></div></div></div></section><section id="content" class="grid"><article class="card"><span class="tag">READER</span><h2>BOOK IMPORT</h2><p>EPUB / FB2 / TXT → clean UTF-8, indexed and ready for Pocket OS Reader.</p><label id="bookDrop" class="drop"><span><strong>DROP BOOKS HERE</strong><small>or click to choose files</small></span><input id="bookInput" type="file" multiple accept=".txt,.epub,.fb2"></label><div id="bookProgress" class="progress"><i></i></div></article><article class="card"><span class="tag">LISTEN</span><h2>MUSIC IMPORT</h2><p>Validate MP3, preserve its title and assign a stable Cardputer storage name.</p><label id="musicDrop" class="drop"><span><strong>DROP MP3 HERE</strong><small>one track or a group</small></span><input id="musicInput" type="file" multiple accept=".mp3,audio/mpeg"></label><div id="musicProgress" class="progress"><i></i></div></article><article id="firmware" class="card"><span class="tag">USB</span><h2>FIRMWARE</h2><p>Build locally with ESP-IDF or flash the current project to a detected Cardputer port.</p><div class="actions"><select id="portSelect"><option value="">No USB device</option></select><button id="buildBtn" class="btn">BUILD</button><button id="flashBtn" class="btn danger">FLASH</button></div><div id="jobProgress" class="progress"><i></i></div></article><article class="card"><span class="tag">LOCAL</span><h2>SAFETY CONTRACT</h2><p>This interface runs only on your Mac. Content operations target a detected ABVx SD. Flash accepts only a currently detected USB serial port and always asks again.</p><div class="device-lines"><div class="device-line"><span>NETWORK</span><b>127.0.0.1 ONLY</b></div><div class="device-line"><span>CLOUD</span><b>OFF</b></div><div class="device-line"><span>AUTO FLASH</span><b>NEVER</b></div><div class="actions"><button id="stopAppBtn" class="btn">STOP COMPANION</button></div></div></article><article id="activity" class="card log"><h2>ACTIVITY</h2><p>Concise results and current build/flash output.</p><div id="terminal" class="terminal">Companion ready.</div></article></section></main></div><div id="toast" class="toast"></div><dialog id="flashDialog"><div class="modal"><h3>FLASH CARDPUTER?</h3><p>This writes the current firmware build to <code id="confirmPort"></code>. Put Cardputer in the required USB/download state and close any serial monitor.</p><div class="actions"><button id="cancelFlash" class="btn">CANCEL</button><button id="confirmFlash" class="btn danger">YES, FLASH</button></div></div></dialog>
+:root{--bg:#070908;--panel:#0d120f;--line:#29322d;--text:#edf5ef;--muted:#87958c;--acid:#b8ff46;--bad:#ff5d57;--shadow:0 24px 60px #0008}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 72% -20%,#213021 0,transparent 38%),linear-gradient(135deg,#050706,#0a0e0b 60%,#060807);color:var(--text);font-family:Monaco,"Courier New",monospace;min-height:100vh}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.07;background:repeating-linear-gradient(0deg,transparent 0 3px,#d6ffe3 4px)}
+button,input,select{font:inherit}
+.shell{min-height:100vh;display:grid;grid-template-columns:248px 1fr}
+.rail{padding:28px 22px;border-right:1px solid var(--line);background:#060907dd;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.brand{font-size:25px;font-weight:900;letter-spacing:.18em}.brand span{color:var(--acid)}
+.version{font-size:10px;color:var(--muted);margin-top:7px}
+.nav{margin-top:48px;display:grid;gap:8px}.nav a{color:var(--muted);text-decoration:none;padding:10px 12px;border-left:2px solid transparent;font-size:12px}.nav a:hover,.nav a.active{color:var(--text);border-color:var(--acid);background:#111713}
+.rail-state{margin-top:auto;border:1px solid var(--line);padding:14px;background:#0b100d}
+.led{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 12px currentColor;margin-right:8px}.led.ok{background:var(--acid)}
+.tiny{font-size:10px;color:var(--muted);line-height:1.6}.main{padding:38px clamp(24px,4vw,68px) 60px;max-width:1440px;width:100%;margin:auto}
+.top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px}
+.eyebrow{font-size:10px;color:var(--acid);letter-spacing:.18em;text-transform:uppercase}.top h1{font-size:34px;margin:6px 0 0;letter-spacing:-.04em}.clock{font-size:12px;color:var(--muted)}
+.hero{border:1px solid var(--line);background:linear-gradient(120deg,#151d17f5,#090d0af5);padding:24px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.hero:after{content:"SD / USB / IDF";position:absolute;right:18px;top:15px;color:#3d4a41;font-size:10px;letter-spacing:.15em}
+.hero-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:28px}
+.status-title{font-size:22px;font-weight:800}.mark{color:var(--acid)}
+.path{color:var(--muted);font-size:11px;margin:8px 0 20px;overflow:hidden;text-overflow:ellipsis}
+.capacity{height:8px;border:1px solid #344138;background:#060806;padding:1px}.capacity i{display:block;height:100%;width:0;background:var(--acid);box-shadow:0 0 15px #b8ff4673;transition:width .4s}
+.stats{display:flex;gap:24px;margin-top:12px}.stat b{display:block;font-size:18px}.stat span{font-size:9px;color:var(--muted)}
+.device-lines{display:grid;gap:10px;align-content:center}.device-line{display:flex;justify-content:space-between;border-bottom:1px dashed #283029;padding-bottom:8px;font-size:11px}.device-line span{color:var(--muted)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
+.card{border:1px solid var(--line);background:#0d120ff0;padding:20px;min-height:220px;position:relative}
+.card h2{font-size:14px;margin:0 0 4px;letter-spacing:.08em}
+.card p{font-size:10px;color:var(--muted);line-height:1.55;margin:0 0 16px}
+.tag{position:absolute;right:14px;top:14px;font-size:9px;color:var(--acid);border:1px solid #405333;padding:4px 7px}
+.drop{border:1px dashed #405046;min-height:112px;display:grid;place-items:center;text-align:center;padding:20px;cursor:pointer;transition:.18s;background:#090d0a}.drop:hover,.drop.drag{border-color:var(--acid);background:#10180e;transform:translateY(-2px)}.drop.locked{pointer-events:none;opacity:.45;filter:grayscale(55%)}
+.drop strong{display:block;font-size:13px;margin-bottom:6px}.drop small{font-size:9px;color:var(--muted)}.drop input{display:none}
+.actions{display:flex;gap:9px;flex-wrap:wrap}.btn{border:1px solid #3b493f;background:#111813;color:var(--text);padding:10px 13px;font-size:10px;cursor:pointer;text-transform:uppercase}.btn:hover:not(:disabled){border-color:var(--acid);color:var(--acid)}
+.btn.primary{background:var(--acid);border-color:var(--acid);color:#0a0d0a;font-weight:900}.btn.danger{border-color:#663936;color:#ff8d88}.btn:disabled{opacity:.35;cursor:not-allowed}
+select{background:#080c09;color:var(--text);border:1px solid var(--line);padding:10px;min-width:210px;max-width:100%}
+.progress{height:5px;background:#080b09;margin-top:14px;overflow:hidden;display:none}.progress.show{display:block}.progress i{display:block;height:100%;width:0;background:var(--acid);transition:width .15s}.progress.busy i{width:35%;animation:scan 1.2s infinite ease-in-out}
+@keyframes scan{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+.log{grid-column:1/-1;min-height:160px}
+.terminal{background:#050705;border:1px solid #222a25;padding:14px;height:120px;overflow:auto;white-space:pre-wrap;font-size:10px;line-height:1.55;color:#b9c5bd}
+.toast{position:fixed;right:24px;bottom:24px;max-width:420px;background:#111813;border:1px solid var(--acid);padding:13px 16px;font-size:11px;box-shadow:var(--shadow);transform:translateY(100px);opacity:0;transition:.25s;z-index:20}.toast.show{transform:none;opacity:1}.toast.bad{border-color:var(--bad)}
+dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;box-shadow:0 35px 100px #000;max-width:480px}dialog::backdrop{background:#000c}
+.modal{padding:24px}.modal h3{margin:0 0 12px;color:#ff918b}.modal p{font-size:11px;color:var(--muted);line-height:1.6}.modal code{color:var(--text)}.modal .actions{justify-content:flex-end;margin-top:22px}
+.checklist{display:grid;gap:8px;font-size:10px;line-height:1.42}.checklist .ok{color:var(--acid)}.checklist .warn{color:#ffd47a}.checkline{display:flex;gap:7px;align-items:flex-start}
+.queue-list{margin-top:12px;display:grid;gap:7px;font-size:10px}.queue-row{display:flex;justify-content:space-between;padding:8px;border-bottom:1px dashed #273027;color:var(--muted)}.queue-name{color:var(--text)}.queue-code{min-width:88px;text-align:right}
+.terminal-title{display:flex;justify-content:space-between;align-items:center}.queue-state{font-size:9px;color:var(--muted)}
+.rules{margin-top:12px}.rules .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #273027;font-size:10px}.rules b{color:var(--text)}.rules .code{color:var(--muted);text-align:right;word-break:break-all}
+.list{display:grid;gap:8px;margin:0;padding-left:16px;font-size:10px;line-height:1.45;color:var(--muted)}
+.error-templates{margin-top:10px;display:grid;gap:6px;font-size:10px}.error-templates .rule{padding:8px;border:1px dashed #2f3a31}.error-templates .pattern{color:var(--acid)} .error-templates .hint{color:var(--muted)}
+@media(max-width:900px){.shell{grid-template-columns:1fr}.rail{height:auto;position:relative;border-right:0;border-bottom:1px solid var(--line);padding:18px 22px}.nav{display:none}.rail-state{position:absolute;right:18px;top:12px;margin:0}.main{padding:24px 16px}.hero-grid,.grid{grid-template-columns:1fr}.top h1{font-size:27px}.clock{display:none}.log{grid-column:auto}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="brand">ABV<span>x</span></div>
+    <div class="version">MAC COMPANION / 0.1</div>
+    <nav class="nav"><a class="active" href="#device">01 DEVICE</a><a href="#content">02 CONTENT</a><a href="#firmware">03 FIRMWARE</a><a href="#activity">04 ACTIVITY</a></nav>
+    <div class="rail-state"><div><i id="railLed" class="led"></i><span id="railLabel">SCANNING</span></div><div id="railPath" class="tiny">Looking for ABVx SD...</div></div>
+  </aside>
+
+  <main class="main">
+    <header class="top"><div><div class="eyebrow">Pocket OS control surface</div><h1>Device command deck</h1></div><div id="localClock" class="clock"></div></header>
+
+    <section id="device" class="hero">
+      <div class="hero-grid">
+        <div>
+          <div id="sdTitle" class="status-title"><span class="mark">●</span> Detecting storage</div>
+          <div id="sdPath" class="path">/Volumes/...</div>
+          <div class="capacity"><i id="capacityBar"></i></div>
+          <div class="stats"><div class="stat"><b id="freeValue">--</b><span>FREE</span></div><div class="stat"><b id="musicCount">--</b><span>TRACKS</span></div><div class="stat"><b id="bookCount">--</b><span>BOOKS</span></div><div class="stat"><b id="noteCount">--</b><span>NOTES</span></div></div>
+        </div>
+        <div class="device-lines">
+          <div class="device-line"><span>USB PORT</span><b id="usbState">SCANNING</b></div>
+          <div class="device-line"><span>ESP-IDF</span><b id="idfState">SCANNING</b></div>
+          <div class="device-line"><span>FIRMWARE</span><b id="fwState">SCANNING</b></div>
+          <div class="device-line"><span>IMPORT READY</span><b id="importState">--</b></div>
+          <div class="actions"><button id="refreshBtn" class="btn">REFRESH</button><button id="timeBtn" class="btn primary">SYNC TIME</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="guide" class="grid">
+      <article class="card">
+        <span class="tag">ONBOARDING</span>
+        <h2>Quick start</h2>
+        <p>Use this flow for reliable first import.</p>
+        <ol class="list">
+          <li>Insert ABVx SD card and wait until it appears.</li>
+          <li>Pick file kind and drop files.</li>
+          <li>Press <b>REFRESH</b> and verify counters in <b>Storage</b>.</li>
+          <li>Open card app and verify lists.</li>
+        </ol>
+        <div class="checklist" style="margin-top:10px">
+          <div class="checkline"><span>•</span><span>SD state:</span><span id="hintSd" class="warn">unknown</span></div>
+          <div class="checkline"><span>•</span><span>Service:</span><span>http://127.0.0.1:8765</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <span class="tag">FILE TYPES</span>
+        <h2>Local import contract</h2>
+        <div class="rules">
+          <div class="row"><span><b>Books</b></span><span class="code">TXT • EPUB • FB2 → /books</span></div>
+          <div class="row"><span><b>Music</b></span><span class="code">MP3 → /music</span></div>
+          <div class="row"><span><b>Notes</b></span><span class="code">TXT → /notes</span></div>
+          <div class="row"><span><b>Rules</b></span><span class="code">size ≤ 128MB, >0 bytes</span></div>
+        </div>
+        <div id="fileContract" class="device-line" style="margin-top:12px"><span>FILE CONTRACT</span><b id="fileContractLine">book: .txt .epub .fb2 • music: .mp3 • notes: .txt</b></div>
+      </article>
+      <article class="card">
+        <span class="tag">ERRORS</span>
+        <h2>Error templates</h2>
+        <p>Common failures and suggested fixes.</p>
+        <div id="errorTemplateList" class="error-templates">Loading templates…</div>
+      </article>
+      <article class="card">
+        <span class="tag">QUEUE</span>
+        <h2>Operation queue</h2>
+        <p>Recent jobs and current runtime state.</p>
+        <div id="queueList" class="queue-list">No jobs yet</div>
+        <div id="queueState" class="queue-state">state: IDLE</div>
+      </article>
+    </section>
+
+    <section id="content" class="grid">
+      <article class="card">
+        <span class="tag">READER</span>
+        <h2>Book import</h2>
+        <p>EPUB / FB2 / TXT → UTF-8 conversion and indexing.</p>
+        <label id="bookDrop" class="drop"><span><strong>DROP BOOKS HERE</strong><small>or click to choose files • allowed: .txt, .epub, .fb2</small></span><input id="bookInput" type="file" multiple accept=".txt,.epub,.fb2"></label>
+        <div id="bookProgress" class="progress"><i></i></div>
+      </article>
+      <article class="card">
+        <span class="tag">LISTEN</span>
+        <h2>Music import</h2>
+        <p>Validate MP3, store stable ABVx-compatible names.</p>
+        <label id="musicDrop" class="drop"><span><strong>DROP MP3 HERE</strong><small>or click to choose files • allowed: .mp3</small></span><input id="musicInput" type="file" multiple accept=".mp3,audio/mpeg"></label>
+        <div id="musicProgress" class="progress"><i></i></div>
+      </article>
+      <article id="firmware" class="card">
+        <span class="tag">USB</span>
+        <h2>Firmware</h2>
+        <p>Build locally with ESP-IDF or flash current project.</p>
+        <div class="actions"><select id="portSelect"><option value="">No USB device</option></select><button id="buildBtn" class="btn">BUILD</button><button id="flashBtn" class="btn danger">FLASH</button></div>
+        <div id="jobProgress" class="progress"><i></i></div>
+      </article>
+      <article class="card">
+        <span class="tag">LOCAL</span>
+        <h2>Safety contract</h2>
+        <p>Runs locally on Mac only. Content operations target detected ABVx SD.</p>
+        <div class="device-lines">
+          <div class="device-line"><span>NETWORK</span><b>127.0.0.1 ONLY</b></div>
+          <div class="device-line"><span>CLOUD</span><b>OFF</b></div>
+          <div class="device-line"><span>AUTO FLASH</span><b>NEVER</b></div>
+          <div class="actions"><button id="stopAppBtn" class="btn">STOP COMPANION</button></div>
+        </div>
+      </article>
+      <article id="activity" class="card log">
+        <h2><span class="terminal-title"><span>Activity</span><span id="activityState" class="queue-state">monitoring</span></span></h2>
+        <p>Concise results and current build/flash output.</p>
+        <div id="terminal" class="terminal">Companion ready.</div>
+      </article>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+<dialog id="flashDialog">
+  <div class="modal">
+    <h3>FLASH CARDPUTER?</h3>
+    <p>This writes current firmware build to <code id="confirmPort"></code>. Put Cardputer in USB/download mode and close any serial monitor.</p>
+    <div class="actions"><button id="cancelFlash" class="btn">CANCEL</button><button id="confirmFlash" class="btn danger">YES, FLASH</button></div>
+  </div>
+</dialog>
+
 <script>
 const TOKEN = "__ABVX_TOKEN__";
 const $ = id => document.getElementById(id);
 let latest = null;
 let toastTimer = null;
+
 const fmt = n => {
   if (!n && n !== 0) return "0B";
   const u = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let v = n;
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024;
-    i++;
-  }
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
   return `${v.toFixed(i ? 1 : 0)}${u[i]}`;
 };
 
-const esc = v => String(v).replace(/[&<>"']/g, c => ({
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;"
-})[c]);
+const esc = v => String(v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
 
-const ALLOWED_EXT = {
-  book: new Set([".txt", ".epub", ".fb2"]),
-  music: new Set([".mp3"])
-};
+const ALLOWED_EXT = { book: new Set([".txt", ".epub", ".fb2"]), music: new Set([".mp3"]) };
 const MAX_UI_LOG = 24000;
+
+const ERROR_TEMPLATES = [
+  { pattern: /no abvx sd|sd is not|sd offline|not detected/i, hint: "Insert ABVx SD, then press REFRESH." },
+  { pattern: /another import|already running|build\/flash|currently running/i, hint: "Wait until current job finishes." },
+  { pattern: /unsupported file type|extension/i, hint: "Use book: .txt/.epub/.fb2, music: .mp3, notes: .txt only." },
+  { pattern: /file size|empty file|larger than/i, hint: "Use files > 0 bytes and <= 128 MB." },
+  { pattern: /port|usb/i, hint: "Select an active USB port in the firmware panel." },
+  { pattern: /invalid json|request body|payload/i, hint: "Retry request. If repeats, reload this page." },
+];
+const ERROR_HINTS = ERROR_TEMPLATES.map(({pattern, hint}) => [pattern, hint]);
+
+function renderErrorTemplates() {
+  const container = $("errorTemplateList");
+  container.innerHTML = ERROR_TEMPLATES
+    .map(x => `<div class="rule"><span class="pattern">${x.pattern.source}</span><span class="hint">${esc(x.hint)}</span></div>`)
+    .join("");
+}
+
+function friendlyError(raw) {
+  const text = String(raw || "Unknown error").trim();
+  for (const [re, msg] of ERROR_HINTS) { if (re.test(text)) return msg; }
+  return text;
+}
+
+const toIcon = state => ({RUNNING:"◌", DONE:"✓", FAILED:"✕", IDLE:"•"}[state] || "•");
 
 function log(line) {
   const t = $("terminal");
@@ -65,12 +253,22 @@ function applyActionState() {
 
   $("importState").textContent = readyImport ? "READY" : "SD OFFLINE";
   $("importState").style.color = readyImport ? "var(--acid)" : "var(--bad)";
+  $("hintSd").textContent = readyImport ? "READY" : "SD OFFLINE";
+  $("hintSd").className = readyImport ? "ok" : "warn";
+}
+
+function updateQueuePanel() {
+  if (!latest || !latest.job) return;
+  const q = latest.job.queue || [];
+  const list = (q.length ? q : [{name: latest.job.name || "IDLE", state: latest.job.state || "IDLE", returncode: latest.job.returncode}]).slice(-8).reverse();
+  $("queueList").innerHTML = list.map(i => `<div class=\"queue-row\"><span class=\"queue-name\">${esc(i.name || "task")}</span><span class=\"queue-code\">${toIcon(i.state)} ${esc(i.state || "IDLE")} (${esc(i.returncode == null ? "-" : i.returncode)})</span></div>`).join("") || "No jobs yet";
+  $("queueState").textContent = `state: ${latest.job.state || "IDLE"}`;
+  $("activityState").textContent = `job=${latest.job.state || "IDLE"}`;
 }
 
 function isSupported(kind, file) {
-  const ext = (file.name.split('.').pop() || "").toLowerCase();
-  const dot = ext ? `.${ext}` : "";
-  return ALLOWED_EXT[kind]?.has(dot);
+  const ext = `.${(file.name.split('.').pop() || '').toLowerCase()}`;
+  return ALLOWED_EXT[kind]?.has(ext);
 }
 
 function validateBeforeUpload(kind, file) {
@@ -88,9 +286,7 @@ async function api(path, o = {}) {
   o.headers = { ...(o.headers || {}), "X-ABVX-Token": TOKEN };
   const response = await fetch(path, o);
   const data = await response.json();
-  if (!response.ok || !data.ok) {
-    throw Error(data.error || `HTTP ${response.status}`);
-  }
+  if (!response.ok || !data.ok) throw Error(friendlyError(data.error || `HTTP ${response.status}`));
   return data;
 }
 
@@ -117,9 +313,7 @@ async function refresh() {
 
     const p = $("portSelect");
     const oldPort = p.value;
-    p.innerHTML = latest.usb_ports.length
-      ? latest.usb_ports.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("")
-      : '<option value="">No USB device</option>';
+    p.innerHTML = latest.usb_ports.length ? latest.usb_ports.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("") : '<option value="">No USB device</option>';
     if (latest.usb_ports.includes(oldPort)) p.value = oldPort;
 
     if (latest.job.output && latest.job.output !== $("terminal").dataset.job) {
@@ -129,23 +323,18 @@ async function refresh() {
     }
 
     applyActionState();
+    updateQueuePanel();
     log(`status: job=${latest.job.state}, ready_import=${latest.ready_import ? 'yes' : 'no'}`);
-  } catch (e) {
-    toast(e.message, true);
-  }
+  } catch (e) { toast(e.message, true); }
 }
 
 function upload(kind, file, bar) {
   return new Promise((ok, no) => {
     const reason = validateBeforeUpload(kind, file);
-    if (reason) {
-      no(new Error(reason));
-      return;
-    }
+    if (reason) return no(new Error(reason));
 
-    const endpoint = `/api/import?kind=${kind}&filename=${encodeURIComponent(file.name)}`;
     const req = new XMLHttpRequest();
-    req.open("POST", endpoint);
+    req.open("POST", `/api/import?kind=${kind}&filename=${encodeURIComponent(file.name)}`);
     req.setRequestHeader("X-ABVX-Token", TOKEN);
     req.upload.onprogress = e => {
       if (e.lengthComputable) {
@@ -166,10 +355,7 @@ function upload(kind, file, bar) {
 
 async function imports(kind, files) {
   const bar = $(kind + "Progress");
-  if (!files.length) {
-    toast("No files selected", true);
-    return;
-  }
+  if (!files.length) { toast("No files selected", true); return; }
   for (const file of files) {
     try {
       const reason = validateBeforeUpload(kind, file);
@@ -180,56 +366,44 @@ async function imports(kind, files) {
       toast(`${file.name} imported`);
       await refresh();
     } catch (e) {
-      log(`ERROR ${file.name}: ${e.message}`);
-      toast(e.message, true);
+      const message = friendlyError(e.message);
+      log(`ERROR ${file.name}: ${message}`);
+      toast(message, true);
       break;
     }
   }
-  setTimeout(() => {
-    bar.className = "progress";
-    bar.firstElementChild.style.width = "0";
-  }, 700);
+  setTimeout(() => { bar.className = "progress"; bar.firstElementChild.style.width = "0"; }, 700);
 }
 
-function drop(kind) {
+function setupDrop(kind) {
   const area = $(kind + "Drop");
   const input = $(kind + "Input");
   input.onchange = () => imports(kind, [...input.files]);
 
-  ["dragenter", "dragover"].forEach(eventName => {
-    area.addEventListener(eventName, e => {
-      e.preventDefault();
-      if (!latest || !latest.sd.ready || latest.job.state === "RUNNING") return;
-      area.classList.add("drag");
-    });
-  });
+  ["dragenter", "dragover"].forEach(eventName => area.addEventListener(eventName, e => {
+    e.preventDefault();
+    if (!latest || !latest.sd.ready || latest.job.state === "RUNNING") return;
+    area.classList.add("drag");
+  }));
 
-  ["dragleave", "drop"].forEach(eventName => {
-    area.addEventListener(eventName, e => {
-      e.preventDefault();
-      area.classList.remove("drag");
-    });
-  });
+  ["dragleave", "drop"].forEach(eventName => area.addEventListener(eventName, e => {
+    e.preventDefault(); area.classList.remove("drag");
+  }));
 
   area.addEventListener("drop", e => {
-    const filtered = [...e.dataTransfer.files].filter(f => ALLOWED_EXT[kind].has(`.${(f.name.split('.').pop() || '').toLowerCase()}`));
-    const dropped = filtered.length === 0 ? [...e.dataTransfer.files] : filtered;
-    if (filtered.length === 0 && e.dataTransfer.files.length) {
-      toast(`Skipped: unsupported files for ${kind}`, true);
-    }
-    imports(kind, dropped);
+    const files = [...e.dataTransfer.files];
+    const filtered = files.filter(f => ALLOWED_EXT[kind].has(`.${(f.name.split('.').pop() || '').toLowerCase()}`));
+    if (filtered.length === 0 && files.length) toast(`Skipped: unsupported files for ${kind}`);
+    imports(kind, filtered.length ? filtered : files);
   });
 }
 
 $("refreshBtn").onclick = refresh;
 $("stopAppBtn").onclick = async () => {
   if (!confirm("Stop ABVx Companion?")) return;
-  try {
-    await api("/api/shutdown", { method: "POST", body: "{}" });
+  try { await api("/api/shutdown", { method: "POST", body: "{}" });
     document.body.innerHTML = `<main style="padding:60px;font-family:Monaco,monospace;background:#070908;color:#edf5ef;min-height:100vh"><h1>ABVx Companion stopped</h1><p>You can close this tab.</p></main>`;
-  } catch (e) {
-    toast(e.message, true);
-  }
+  } catch (e) { toast(e.message, true); }
 };
 
 $("timeBtn").onclick = async () => {
@@ -239,6 +413,7 @@ $("timeBtn").onclick = async () => {
     const data = await api("/api/time-sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     log(data.message);
     toast("Cardputer time synchronized");
+    await refresh();
   } catch (e) {
     log(`TIME ERROR: ${e.message}`);
     toast(e.message, true);
@@ -253,9 +428,7 @@ $("buildBtn").onclick = async () => {
     log(data.message);
     toast(data.message);
     await refresh();
-  } catch (e) {
-    toast(e.message, true);
-  }
+  } catch (e) { toast(friendlyError(e.message), true); }
 };
 
 $("flashBtn").onclick = () => {
@@ -263,27 +436,23 @@ $("flashBtn").onclick = () => {
   $("flashDialog").showModal();
 };
 $("cancelFlash").onclick = () => $("flashDialog").close();
-
 $("confirmFlash").onclick = async () => {
   const port = $("portSelect").value;
   $("flashDialog").close();
   try {
-    const data = await api("/api/flash", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ port, confirm: true })
-    });
+    const data = await api("/api/flash", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ port, confirm: true }) });
     log(data.message);
     toast(data.message);
     await refresh();
-  } catch (e) {
-    toast(e.message, true);
-  }
+  } catch (e) { toast(friendlyError(e.message), true); }
 };
 
-drop("book");
-drop("music");
+setupDrop("book");
+setupDrop("music");
+renderErrorTemplates();
 setInterval(() => { $("localClock").textContent = new Date().toLocaleString(); }, 1000);
 refresh();
 setInterval(refresh, 2200);
-</script></body></html>
+</script>
+</body>
+</html>

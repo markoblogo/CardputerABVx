@@ -38,12 +38,17 @@ class AppState:
         self.job_state = "IDLE"
         self.job_returncode = None
         self.job_output = deque(maxlen=240)
+        self.job_queue = deque(maxlen=10)
 
     def snapshot(self):
         with self.lock:
-            return {"name": self.job_name, "state": self.job_state,
-                    "returncode": self.job_returncode,
-                    "output": "".join(self.job_output)[-MAX_JOB_OUTPUT:]}
+            return {
+                "name": self.job_name,
+                "state": self.job_state,
+                "returncode": self.job_returncode,
+                "output": "".join(self.job_output)[-MAX_JOB_OUTPUT:],
+                "queue": list(self.job_queue),
+            }
 
     def start(self, name, command):
         with self.lock:
@@ -52,6 +57,11 @@ class AppState:
             self.job_name, self.job_state, self.job_returncode = name, "RUNNING", None
             self.job_output.clear()
             self.job_output.append(f"{name} started\n")
+            self.job_queue.append({
+                "name": name,
+                "state": "RUNNING",
+                "returncode": None
+            })
         threading.Thread(target=self._run, args=(command,), daemon=True).start()
 
     def _run(self, command):
@@ -70,6 +80,9 @@ class AppState:
         with self.lock:
             self.job_returncode = returncode
             self.job_state = "DONE" if returncode == 0 else "FAILED"
+            if self.job_queue:
+                self.job_queue[-1]["state"] = self.job_state
+                self.job_queue[-1]["returncode"] = returncode
             self.job_output.append(f"{self.job_name} {self.job_state.lower()} ({returncode})\n")
 
 
