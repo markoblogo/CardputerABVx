@@ -334,6 +334,21 @@ def summarize_intent(intent, arguments):
     return f"Run {intent}."
 
 
+def fallback_payload(reason, confidence, summary, section):
+    return {
+        "status": INTENT_FALLBACK,
+        "intent": None,
+        "arguments": {},
+        "confidence": confidence,
+        "action_label": "Open Companion Panel",
+        "target_section": section,
+        "preconditions": {},
+        "summary": summary,
+        "requires_confirmation": False,
+        "fallback_reason": reason,
+    }
+
+
 def intent_target_section(intent):
     mapping = {
         "sd_status": "device",
@@ -418,6 +433,9 @@ def resolve_intent_request(payload, status):
             "intent": None,
             "arguments": {},
             "confidence": 0.0,
+            "action_label": "No Matching Command",
+            "target_section": "guide",
+            "preconditions": {},
             "summary": "This request is outside the Companion command set.",
             "requires_confirmation": False,
             "fallback_reason": "out_of_scope",
@@ -425,25 +443,11 @@ def resolve_intent_request(payload, status):
     arguments = core.validate_intent_arguments(intent, arguments)
     bounded = intent_context_from_status(status)
     if intent in ("sync_music", "sync_books") and not bounded["sd_detected"]:
-        return {
-            "status": INTENT_FALLBACK,
-            "intent": None,
-            "arguments": {},
-            "confidence": confidence,
-            "summary": "Mount the SD card, then use the sync panel.",
-            "requires_confirmation": False,
-            "fallback_reason": "missing_sd",
-        }
+        return fallback_payload("missing_sd", confidence, "Mount the SD card, then use the sync panel.", "device")
+    if intent == "sync_voice" and not bounded["voice_pending"]:
+        return fallback_payload("voice_empty", confidence, "No voice items are ready for sync in the current Companion context.", "guide")
     if intent == "prepare_browser_package" and not bounded["browser_package_enabled"]:
-        return {
-            "status": INTENT_FALLBACK,
-            "intent": None,
-            "arguments": {},
-            "confidence": confidence,
-            "summary": "Browser package preparation is not enabled in this build.",
-            "requires_confirmation": False,
-            "fallback_reason": "feature_disabled",
-        }
+        return fallback_payload("feature_disabled", confidence, "Browser package preparation is not enabled in this build.", "content")
     return {
         "status": INTENT_OK,
         "intent": intent,
