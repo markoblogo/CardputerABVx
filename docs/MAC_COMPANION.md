@@ -200,6 +200,7 @@ Rules:
 - `text` is required plain text.
 - `context` is optional and contains only bounded Companion state flags.
 - No raw filesystem paths are accepted from the model-facing request.
+- The resolver may accept bounded mixed-language shortcuts, including simple Russian, English, and translit variants, but only when they map onto the same fixed intent enum.
 
 ### Resolve response
 
@@ -382,6 +383,7 @@ Example:
 - Use `reject` when the request is outside the bounded command set.
 - Never convert missing prerequisites into guessed arguments.
 - Never auto-run on partial matches such as `maybe sync something`.
+- Keep synonym support bounded and explicit; do not add open-ended language understanding as a silent contract.
 
 ## Needle PoC integration spec
 

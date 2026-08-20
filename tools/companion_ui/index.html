@@ -59,6 +59,10 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
 .list{display:grid;gap:8px;margin:0;padding-left:16px;font-size:10px;line-height:1.45;color:var(--muted)}
 .error-templates{margin-top:10px;display:grid;gap:6px;font-size:10px}.error-templates .rule{padding:8px;border:1px dashed #2f3a31}.error-templates .pattern{color:var(--acid)} .error-templates .hint{color:var(--muted)}
 .intent-shell{display:grid;gap:10px}.intent-input{width:100%;background:#080c09;color:var(--text);border:1px solid var(--line);padding:11px 12px}.intent-result{min-height:78px;border:1px dashed #2c3830;padding:10px;font-size:10px;line-height:1.5;color:var(--muted);background:#090d0a}.intent-result strong{color:var(--text)}.intent-result .ok{color:var(--acid)}.intent-result .bad{color:#ffb0a9}.intent-actions{display:flex;gap:9px;flex-wrap:wrap}
+.intent-target{color:var(--acid)}
+.intent-jump{font-size:9px;color:var(--muted)}
+.section-flash{animation:sectionFlash 1.2s ease-out 1}
+@keyframes sectionFlash{0%{box-shadow:0 0 0 0 #b8ff4690;border-color:var(--acid)}100%{box-shadow:0 0 0 18px transparent;border-color:var(--line)}}
 @media(max-width:900px){.shell{grid-template-columns:1fr}.rail{height:auto;position:relative;border-right:0;border-bottom:1px solid var(--line);padding:18px 22px}.nav{display:none}.rail-state{position:absolute;right:18px;top:12px;margin:0}.main{padding:24px 16px}.hero-grid,.grid{grid-template-columns:1fr}.top h1{font-size:27px}.clock{display:none}.log{grid-column:auto}}
 </style>
 </head>
@@ -124,7 +128,7 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
         <h2>Command shortcut</h2>
         <p>Resolve short Companion commands into existing fixed operations.</p>
         <div class="intent-shell">
-          <input id="intentInput" class="intent-input" type="text" placeholder="sync music to sd">
+          <input id="intentInput" class="intent-input" type="text" placeholder="sync music to sd / синк музыка на sd">
           <div class="intent-actions">
             <button id="intentResolveBtn" class="btn primary">RESOLVE</button>
             <button id="intentConfirmBtn" class="btn" disabled>CONFIRM</button>
@@ -310,6 +314,26 @@ function intentContext() {
   };
 }
 
+function sectionTitle(sectionId) {
+  return {
+    device: "Device",
+    guide: "Guide",
+    content: "Content",
+    firmware: "Firmware",
+    activity: "Activity"
+  }[sectionId] || sectionId;
+}
+
+function flashSection(sectionId) {
+  const node = $(sectionId);
+  if (!node) return;
+  node.scrollIntoView({ behavior: "smooth", block: "start" });
+  node.classList.remove("section-flash");
+  void node.offsetWidth;
+  node.classList.add("section-flash");
+  setTimeout(() => node.classList.remove("section-flash"), 1400);
+}
+
 function renderPendingIntent() {
   const panel = $("intentResult");
   const confirmBtn = $("intentConfirmBtn");
@@ -325,7 +349,9 @@ function renderPendingIntent() {
   const confidence = typeof resolved.confidence === "number" ? resolved.confidence.toFixed(2) : "--";
   const preconditions = resolved.preconditions ? esc(JSON.stringify(resolved.preconditions)) : "{}";
   const kind = resolved.status === "reject" ? "bad" : "ok";
-  panel.innerHTML = `<div><strong class="${kind}">${esc(resolved.action_label || resolved.intent || resolved.status || "intent")}</strong></div><div>${esc(resolved.summary || "")}</div><div>confidence: ${esc(confidence)} · confirm: ${resolved.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(resolved.arguments || {}))}</div><div>preconditions: ${preconditions}</div>`;
+  const target = resolved.target_section ? `<div class="intent-target">target: ${esc(sectionTitle(resolved.target_section))}</div>` : "";
+  const jump = resolved.target_section ? `<div class="intent-jump">Use JUMP TO PANEL to focus the current workflow section.</div>` : "";
+  panel.innerHTML = `<div><strong class="${kind}">${esc(resolved.action_label || resolved.intent || resolved.status || "intent")}</strong></div><div>${esc(resolved.summary || "")}</div>${target}<div>confidence: ${esc(confidence)} · confirm: ${resolved.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(resolved.arguments || {}))}</div><div>preconditions: ${preconditions}</div>${jump}`;
   confirmBtn.disabled = !pending;
   cancelBtn.disabled = !pending && !lastIntentResult;
 }
@@ -345,6 +371,7 @@ async function resolveIntent() {
   lastIntentResult = resolved;
   if (resolved.status === "ok") {
     log(`INTENT ${resolved.intent}: ${resolved.summary}`);
+    if (resolved.target_section) flashSection(resolved.target_section);
     if (data.execution && data.execution.message) {
       log(data.execution.message);
       toast(data.execution.message);

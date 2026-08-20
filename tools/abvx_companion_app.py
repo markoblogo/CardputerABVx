@@ -43,6 +43,57 @@ INTENT_FALLBACK = "fallback"
 INTENT_OK = "ok"
 INTENT_REJECT = "reject"
 INTENT_CONFIRM_REQUIRED = {"sync_time", "sync_music", "sync_books", "sync_voice", "prepare_browser_package"}
+INTENT_TOKEN_ALIASES = {
+    "sinc": "sync",
+    "synk": "sync",
+    "synca": "sync",
+    "обнови": "sync",
+    "обновить": "sync",
+    "обновление": "sync",
+    "синк": "sync",
+    "синкануть": "sync",
+    "перегони": "sync",
+    "перегнать": "sync",
+    "залей": "sync",
+    "закинь": "sync",
+    "скинь": "sync",
+    "copy": "sync",
+    "statusa": "status",
+    "статус": "status",
+    "состояние": "state",
+    "проверь": "check",
+    "показать": "show",
+    "покажи": "show",
+    "музыка": "music",
+    "музон": "music",
+    "трек": "track",
+    "треки": "tracks",
+    "книга": "book",
+    "книги": "books",
+    "букс": "books",
+    "ридер": "reader",
+    "голос": "voice",
+    "войс": "voice",
+    "запись": "recording",
+    "записи": "recordings",
+    "рек": "rec",
+    "время": "time",
+    "часы": "clock",
+    "браузер": "browser",
+    "избранное": "favorites",
+    "страница": "page",
+    "страницы": "pages",
+    "пакет": "package",
+    "карта": "sd",
+    "карточка": "sd",
+    "диск": "storage",
+    "устройство": "device",
+    "экспорт": "export",
+    "бэкап": "backup",
+    "backup": "backup",
+    "удали": "delete",
+    "очисти": "cleanup",
+}
 
 
 def now_stamp():
@@ -283,6 +334,18 @@ def summarize_intent(intent, arguments):
     return f"Run {intent}."
 
 
+def intent_target_section(intent):
+    mapping = {
+        "sd_status": "device",
+        "sync_time": "device",
+        "sync_music": "content",
+        "sync_books": "content",
+        "sync_voice": "guide",
+        "prepare_browser_package": "content",
+    }
+    return mapping.get(intent, "device")
+
+
 def intent_action_label(intent):
     labels = {
         "sd_status": "Load SD Status",
@@ -308,6 +371,14 @@ def intent_preconditions(intent, status):
     return mapping.get(intent, {})
 
 
+def normalize_intent_tokens(text):
+    raw_tokens = text.replace("/", " ").replace("-", " ").replace("_", " ").split()
+    normalized = set()
+    for token in raw_tokens:
+        normalized.add(INTENT_TOKEN_ALIASES.get(token, token))
+    return normalized
+
+
 def resolve_intent_request(payload, status):
     payload = validate_payload_json(payload)
     text = payload.get("text", "")
@@ -319,18 +390,27 @@ def resolve_intent_request(payload, status):
     context = payload.get("context", {})
     if context is not None and not isinstance(context, dict):
         raise RuntimeError("intent context must be an object")
-    if "status" in text or text in {"sd", "card", "card status"}:
+    tokens = normalize_intent_tokens(text)
+    wants_sync = bool(tokens & {"sync", "update", "refresh", "copy", "deploy", "push"})
+    wants_status = bool(tokens & {"status", "state", "info", "check", "show"})
+    wants_music = bool(tokens & {"music", "track", "tracks", "mp3", "audio", "library"})
+    wants_books = bool(tokens & {"book", "books", "reader", "epub", "fb2", "txt"})
+    wants_voice = bool(tokens & {"voice", "recording", "recordings", "rec", "audio-notes"})
+    wants_time = bool(tokens & {"time", "clock", "rtc"})
+    wants_browser = bool(tokens & {"browser", "favorite", "favorites", "package", "page", "pages"})
+    wants_card = bool(tokens & {"sd", "card", "storage", "device"})
+    if wants_status and (wants_card or not (wants_music or wants_books or wants_voice or wants_time or wants_browser)):
         intent, arguments, confidence = "sd_status", {}, 0.99
-    elif "time" in text or "clock" in text:
+    elif wants_time and (wants_sync or "set" in tokens or "show" in tokens):
         intent, arguments, confidence = "sync_time", {"target": "device"}, 0.92
-    elif "music" in text and ("sync" in text or "update" in text):
+    elif wants_music and wants_sync:
         intent, arguments, confidence = "sync_music", {"target": "sd"}, 0.93
-    elif "book" in text and ("sync" in text or "update" in text):
+    elif wants_books and wants_sync:
         intent, arguments, confidence = "sync_books", {"target": "sd"}, 0.93
-    elif "voice" in text and ("sync" in text or "pull" in text or "export" in text):
-        delete_after = "delete" in text or "cleanup" in text
+    elif wants_voice and (wants_sync or "pull" in tokens or "export" in tokens or "backup" in tokens):
+        delete_after = bool(tokens & {"delete", "cleanup", "clean", "remove"})
         intent, arguments, confidence = "sync_voice", {"delete_after": delete_after}, 0.87
-    elif "browser" in text and ("prepare" in text or "package" in text):
+    elif wants_browser and ("prepare" in tokens or "package" in tokens or "build" in tokens):
         intent, arguments, confidence = "prepare_browser_package", {"profile": "favorites"}, 0.75
     else:
         return {
@@ -370,6 +450,7 @@ def resolve_intent_request(payload, status):
         "arguments": arguments,
         "confidence": confidence,
         "action_label": intent_action_label(intent),
+        "target_section": intent_target_section(intent),
         "preconditions": intent_preconditions(intent, status),
         "summary": summarize_intent(intent, arguments),
         "requires_confirmation": intent in INTENT_CONFIRM_REQUIRED,
