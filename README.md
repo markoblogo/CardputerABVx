@@ -53,6 +53,8 @@ Stable baseline:
 
 Next desktop layer: local Companion UI and packaged macOS app over the existing conversion core. Postponed: Companion Wi-Fi transport, browser, AI, and Bluetooth transfer.
 
+If a local AI layer is revisited later, it should begin as a narrow Mac Companion command router over fixed operations only. Current donor candidate: Needle-style tool routing for short commands such as sync, export, and status. It is not a license to add offline chat, a firmware-side assistant, or open-ended agent behavior.
+
 Detailed status: [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
 Changes: [`CHANGELOG.md`](CHANGELOG.md)
 Smoke test: [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md)

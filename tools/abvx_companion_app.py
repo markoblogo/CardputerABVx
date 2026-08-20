@@ -8,6 +8,7 @@ import io
 import json
 import os
 import secrets
+import sys
 import datetime
 import shlex
 import subprocess
@@ -38,6 +39,61 @@ IMPORT_EXTENSIONS = {"book": {".txt", ".epub", ".fb2"}, "music": {".mp3"}}
 SYNC_KEYS = (TRACKS, NOTES, VOICE)
 IMPORT_LOCK = threading.Lock()
 SD_OVERRIDE = None
+INTENT_FALLBACK = "fallback"
+INTENT_OK = "ok"
+INTENT_REJECT = "reject"
+INTENT_CONFIRM_REQUIRED = {"sync_time", "sync_music", "sync_books", "sync_voice", "prepare_browser_package"}
+INTENT_TOKEN_ALIASES = {
+    "sinc": "sync",
+    "synk": "sync",
+    "synca": "sync",
+    "обнови": "sync",
+    "обновить": "sync",
+    "обновление": "sync",
+    "синк": "sync",
+    "синкануть": "sync",
+    "перегони": "sync",
+    "перегнать": "sync",
+    "залей": "sync",
+    "закинь": "sync",
+    "скинь": "sync",
+    "copy": "sync",
+    "statusa": "status",
+    "статус": "status",
+    "состояние": "state",
+    "проверь": "check",
+    "показать": "show",
+    "покажи": "show",
+    "музыка": "music",
+    "музон": "music",
+    "трек": "track",
+    "треки": "tracks",
+    "книга": "book",
+    "книги": "books",
+    "букс": "books",
+    "ридер": "reader",
+    "голос": "voice",
+    "войс": "voice",
+    "запись": "recording",
+    "записи": "recordings",
+    "рек": "rec",
+    "время": "time",
+    "часы": "clock",
+    "браузер": "browser",
+    "избранное": "favorites",
+    "страница": "page",
+    "страницы": "pages",
+    "пакет": "package",
+    "карта": "sd",
+    "карточка": "sd",
+    "диск": "storage",
+    "устройство": "device",
+    "экспорт": "export",
+    "бэкап": "backup",
+    "backup": "backup",
+    "удали": "delete",
+    "очисти": "cleanup",
+}
 
 
 def now_stamp():
@@ -85,6 +141,7 @@ class AppState:
         self.job_output = deque(maxlen=240)
         self.job_queue = deque(maxlen=10)
         self.sync = load_sync_state()
+        self.pending_intent = None
 
     def snapshot(self):
         with self.lock:
@@ -95,7 +152,16 @@ class AppState:
                 "output": "".join(self.job_output)[-MAX_JOB_OUTPUT:],
                 "queue": list(self.job_queue),
                 "sync": {k: v.copy() for k, v in self.sync.items()},
+                "pending_intent": dict(self.pending_intent) if isinstance(self.pending_intent, dict) else None,
             }
+
+    def set_pending_intent(self, pending):
+        with self.lock:
+            self.pending_intent = dict(pending) if isinstance(pending, dict) else None
+
+    def clear_pending_intent(self):
+        with self.lock:
+            self.pending_intent = None
 
     def set_sync(self, key, state, *, last_file="", last_error="", done=False):
         if key not in SYNC_KEYS:
@@ -243,6 +309,166 @@ def device_status():
     return result
 
 
+def intent_context_from_status(status):
+    return {
+        "sd_detected": bool(status.get("sd", {}).get("ready")),
+        "usb_detected": bool(status.get("usb_ports")),
+        "voice_pending": bool(status.get("backup", {}).get("voice")),
+        "browser_package_enabled": False,
+    }
+
+
+def summarize_intent(intent, arguments):
+    if intent == "sd_status":
+        return "Show current SD status."
+    if intent == "sync_time":
+        return "Sync Cardputer time through the current Companion path."
+    if intent == "sync_music":
+        return "Sync prepared music mirror to the mounted SD card."
+    if intent == "sync_books":
+        return "Sync prepared books mirror to the mounted SD card."
+    if intent == "sync_voice":
+        return "Pull voice recordings through the current Companion flow."
+    if intent == "prepare_browser_package":
+        return "Prepare the browser favorites package."
+    return f"Run {intent}."
+
+
+def intent_target_section(intent):
+    mapping = {
+        "sd_status": "device",
+        "sync_time": "device",
+        "sync_music": "content",
+        "sync_books": "content",
+        "sync_voice": "guide",
+        "prepare_browser_package": "content",
+    }
+    return mapping.get(intent, "device")
+
+
+def intent_action_label(intent):
+    labels = {
+        "sd_status": "Load SD Status",
+        "sync_time": "Sync Time",
+        "sync_music": "Sync Music to SD",
+        "sync_books": "Sync Books to SD",
+        "sync_voice": "Sync Voice",
+        "prepare_browser_package": "Prepare Browser Package",
+    }
+    return labels.get(intent, intent)
+
+
+def intent_preconditions(intent, status):
+    context = intent_context_from_status(status)
+    mapping = {
+        "sd_status": {},
+        "sync_time": {"usb_detected": context["usb_detected"]},
+        "sync_music": {"sd_detected": context["sd_detected"]},
+        "sync_books": {"sd_detected": context["sd_detected"]},
+        "sync_voice": {"sd_detected": context["sd_detected"], "voice_pending": context["voice_pending"]},
+        "prepare_browser_package": {"browser_package_enabled": context["browser_package_enabled"]},
+    }
+    return mapping.get(intent, {})
+
+
+def normalize_intent_tokens(text):
+    raw_tokens = text.replace("/", " ").replace("-", " ").replace("_", " ").split()
+    normalized = set()
+    for token in raw_tokens:
+        normalized.add(INTENT_TOKEN_ALIASES.get(token, token))
+    return normalized
+
+
+def resolve_intent_request(payload, status):
+    payload = validate_payload_json(payload)
+    text = payload.get("text", "")
+    if not isinstance(text, str):
+        raise RuntimeError("intent text must be a string")
+    text = " ".join(text.strip().lower().split())
+    if not text:
+        raise RuntimeError("intent text is empty")
+    context = payload.get("context", {})
+    if context is not None and not isinstance(context, dict):
+        raise RuntimeError("intent context must be an object")
+    tokens = normalize_intent_tokens(text)
+    wants_sync = bool(tokens & {"sync", "update", "refresh", "copy", "deploy", "push"})
+    wants_status = bool(tokens & {"status", "state", "info", "check", "show"})
+    wants_music = bool(tokens & {"music", "track", "tracks", "mp3", "audio", "library"})
+    wants_books = bool(tokens & {"book", "books", "reader", "epub", "fb2", "txt"})
+    wants_voice = bool(tokens & {"voice", "recording", "recordings", "rec", "audio-notes"})
+    wants_time = bool(tokens & {"time", "clock", "rtc"})
+    wants_browser = bool(tokens & {"browser", "favorite", "favorites", "package", "page", "pages"})
+    wants_card = bool(tokens & {"sd", "card", "storage", "device"})
+    if wants_status and (wants_card or not (wants_music or wants_books or wants_voice or wants_time or wants_browser)):
+        intent, arguments, confidence = "sd_status", {}, 0.99
+    elif wants_time and (wants_sync or "set" in tokens or "show" in tokens):
+        intent, arguments, confidence = "sync_time", {"target": "device"}, 0.92
+    elif wants_music and wants_sync:
+        intent, arguments, confidence = "sync_music", {"target": "sd"}, 0.93
+    elif wants_books and wants_sync:
+        intent, arguments, confidence = "sync_books", {"target": "sd"}, 0.93
+    elif wants_voice and (wants_sync or "pull" in tokens or "export" in tokens or "backup" in tokens):
+        delete_after = bool(tokens & {"delete", "cleanup", "clean", "remove"})
+        intent, arguments, confidence = "sync_voice", {"delete_after": delete_after}, 0.87
+    elif wants_browser and ("prepare" in tokens or "package" in tokens or "build" in tokens):
+        intent, arguments, confidence = "prepare_browser_package", {"profile": "favorites"}, 0.75
+    else:
+        return {
+            "status": INTENT_REJECT,
+            "intent": None,
+            "arguments": {},
+            "confidence": 0.0,
+            "summary": "This request is outside the Companion command set.",
+            "requires_confirmation": False,
+            "fallback_reason": "out_of_scope",
+        }
+    arguments = core.validate_intent_arguments(intent, arguments)
+    bounded = intent_context_from_status(status)
+    if intent in ("sync_music", "sync_books") and not bounded["sd_detected"]:
+        return {
+            "status": INTENT_FALLBACK,
+            "intent": None,
+            "arguments": {},
+            "confidence": confidence,
+            "summary": "Mount the SD card, then use the sync panel.",
+            "requires_confirmation": False,
+            "fallback_reason": "missing_sd",
+        }
+    if intent == "prepare_browser_package" and not bounded["browser_package_enabled"]:
+        return {
+            "status": INTENT_FALLBACK,
+            "intent": None,
+            "arguments": {},
+            "confidence": confidence,
+            "summary": "Browser package preparation is not enabled in this build.",
+            "requires_confirmation": False,
+            "fallback_reason": "feature_disabled",
+        }
+    return {
+        "status": INTENT_OK,
+        "intent": intent,
+        "arguments": arguments,
+        "confidence": confidence,
+        "action_label": intent_action_label(intent),
+        "target_section": intent_target_section(intent),
+        "preconditions": intent_preconditions(intent, status),
+        "summary": summarize_intent(intent, arguments),
+        "requires_confirmation": intent in INTENT_CONFIRM_REQUIRED,
+        "fallback_reason": None,
+    }
+
+
+def pipeline_command(section):
+    sd = core.resolve_sd(SD_OVERRIDE)
+    script = PROJECT_ROOT / "tools" / "cardputer_local_pipeline.py"
+    return [sys.executable, str(script), f"sync-{section}", "--deploy", "--sd", str(sd)]
+
+
+def time_sync_command(url="http://192.168.4.1"):
+    script = PROJECT_ROOT / "tools" / "abvx_companion.py"
+    return [sys.executable, str(script), "sync-time", "--url", url]
+
+
 def idf_command(action, port=None):
     export = shlex.quote(str(IDF_EXPORT))
     command = f"source {export} >/dev/null && idf.py build" if action == "build" else \
@@ -334,7 +560,37 @@ class Handler(BaseHTTPRequestHandler):
             return
         route = urllib.parse.urlsplit(self.path)
         try:
-            if route.path == "/api/import":
+            if route.path == "/api/intent/resolve":
+                status = device_status()
+                resolved = resolve_intent_request(self._read_json(), status)
+                execution = None
+                if resolved["status"] == INTENT_OK and not resolved["requires_confirmation"]:
+                    execution = self._execute_confirmed_intent(resolved["intent"], resolved["arguments"])
+                    STATE.clear_pending_intent()
+                elif resolved["status"] == INTENT_OK:
+                    STATE.set_pending_intent(resolved)
+                else:
+                    STATE.clear_pending_intent()
+                self._json(200, {
+                    "ok": True,
+                    "resolved": resolved,
+                    "execution": execution,
+                    "pending_intent": STATE.snapshot()["pending_intent"],
+                })
+            elif route.path == "/api/intent/cancel":
+                STATE.clear_pending_intent()
+                self._json(200, {"ok": True, "message": "Pending intent cleared"})
+            elif route.path == "/api/intent/confirm":
+                payload = validate_payload_json(self._read_json())
+                pending = STATE.snapshot().get("pending_intent")
+                if not pending:
+                    raise RuntimeError("no pending intent")
+                if payload.get("confirm") is not True:
+                    raise RuntimeError("intent confirmation required")
+                result = self._execute_confirmed_intent(pending["intent"], pending["arguments"])
+                STATE.clear_pending_intent()
+                self._json(200, {"ok": True, "result": result})
+            elif route.path == "/api/import":
                 self._import_file(urllib.parse.parse_qs(route.query))
             elif route.path == "/api/sync-notes":
                 payload = validate_payload_json(self._read_json())
@@ -375,6 +631,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(404, "not found")
         except Exception as exc:
             self._error(400, exc)
+
+    def _execute_confirmed_intent(self, intent, arguments):
+        arguments = core.validate_intent_arguments(intent, arguments)
+        if intent == "sd_status":
+            return {"message": "status loaded", "status": device_status()}
+        if intent == "sync_time":
+            STATE.start("TIME SYNC", time_sync_command())
+            return {"message": "Time sync started"}
+        if intent == "sync_music":
+            STATE.start("SYNC MUSIC", pipeline_command("music"))
+            return {"message": "Music sync started"}
+        if intent == "sync_books":
+            STATE.start("SYNC BOOKS", pipeline_command("books"))
+            return {"message": "Books sync started"}
+        if intent == "sync_voice":
+            self._sync_voice(delete_after=arguments["delete_after"])
+            return {"message": "Voice sync complete"}
+        if intent == "prepare_browser_package":
+            raise RuntimeError("browser package preparation is not implemented")
+        raise RuntimeError(f"unsupported confirmed intent: {intent}")
 
     def _import_file(self, query):
         kind = query.get("kind", [""])[0]
