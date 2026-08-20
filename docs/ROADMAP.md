@@ -183,7 +183,22 @@ MVP:
 - Save answer to Notes.
 - Voice input/output later.
 
+Allowed low-cost donor path:
+
+- Evaluate tiny tool-calling models such as Needle only as a Mac Companion-side router over fixed Companion tools.
+- Start with a tiny schema set: `sync_music`, `sync_books`, `sync_voice`, `sync_time`, `sd_status`, `prepare_browser_package`.
+- Require explicit confirmation before any write, delete, flash, or network action.
+- Prefer local execution for privacy/offline convenience, but keep the product contract tool-first rather than chat-first.
+- Treat confidence/fallback as a routing aid, not as product permission to guess.
+- Use the bounded implementation backlog in `docs/MAC_COMPANION.md` as the execution contract for any future Needle PoC.
+
 No offline nano-LLM. No standalone Agent unless it becomes a real command/AI surface beyond launcher duplication.
+
+That means:
+
+- No firmware-resident assistant in the active roadmap.
+- No open-ended local chat in Companion.
+- No donor runtime adoption that bypasses the existing Companion core and fixed operations.
 
 ## Parked hardware-dependent work
 

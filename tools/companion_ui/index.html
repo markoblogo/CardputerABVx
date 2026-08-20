@@ -58,6 +58,7 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
 .rules{margin-top:12px}.rules .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #273027;font-size:10px}.rules b{color:var(--text)}.rules .code{color:var(--muted);text-align:right;word-break:break-all}
 .list{display:grid;gap:8px;margin:0;padding-left:16px;font-size:10px;line-height:1.45;color:var(--muted)}
 .error-templates{margin-top:10px;display:grid;gap:6px;font-size:10px}.error-templates .rule{padding:8px;border:1px dashed #2f3a31}.error-templates .pattern{color:var(--acid)} .error-templates .hint{color:var(--muted)}
+.intent-shell{display:grid;gap:10px}.intent-input{width:100%;background:#080c09;color:var(--text);border:1px solid var(--line);padding:11px 12px}.intent-result{min-height:78px;border:1px dashed #2c3830;padding:10px;font-size:10px;line-height:1.5;color:var(--muted);background:#090d0a}.intent-result strong{color:var(--text)}.intent-result .ok{color:var(--acid)}.intent-result .bad{color:#ffb0a9}.intent-actions{display:flex;gap:9px;flex-wrap:wrap}
 @media(max-width:900px){.shell{grid-template-columns:1fr}.rail{height:auto;position:relative;border-right:0;border-bottom:1px solid var(--line);padding:18px 22px}.nav{display:none}.rail-state{position:absolute;right:18px;top:12px;margin:0}.main{padding:24px 16px}.hero-grid,.grid{grid-template-columns:1fr}.top h1{font-size:27px}.clock{display:none}.log{grid-column:auto}}
 </style>
 </head>
@@ -117,6 +118,20 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
           <div class="row"><span><b>Rules</b></span><span class="code">size ≤ 128MB, >0 bytes</span></div>
         </div>
         <div id="fileContract" class="device-line" style="margin-top:12px"><span>FILE CONTRACT</span><b id="fileContractLine">book: .txt .epub .fb2 • music: .mp3 • notes: .txt</b></div>
+      </article>
+      <article class="card">
+        <span class="tag">INTENT</span>
+        <h2>Command shortcut</h2>
+        <p>Resolve short Companion commands into existing fixed operations.</p>
+        <div class="intent-shell">
+          <input id="intentInput" class="intent-input" type="text" placeholder="sync music to sd">
+          <div class="intent-actions">
+            <button id="intentResolveBtn" class="btn primary">RESOLVE</button>
+            <button id="intentConfirmBtn" class="btn" disabled>CONFIRM</button>
+            <button id="intentCancelBtn" class="btn" disabled>CANCEL</button>
+          </div>
+          <div id="intentResult" class="intent-result">No pending command.</div>
+        </div>
       </article>
       <article class="card">
         <span class="tag">BACKUP</span>
@@ -284,6 +299,74 @@ function safeBool(v) {
   return !!v;
 }
 
+function intentContext() {
+  if (!latest) return {};
+  return {
+    sd_detected: Boolean(latest.sd && latest.sd.ready),
+    usb_detected: Boolean(latest.usb_ports && latest.usb_ports.length),
+    voice_pending: Boolean(latest.backup && latest.backup.voice),
+    browser_package_enabled: false
+  };
+}
+
+function renderPendingIntent() {
+  const panel = $("intentResult");
+  const confirmBtn = $("intentConfirmBtn");
+  const cancelBtn = $("intentCancelBtn");
+  const pending = latest && latest.job ? latest.job.pending_intent : null;
+  if (!pending) {
+    panel.innerHTML = "No pending command.";
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    return;
+  }
+  const confidence = typeof pending.confidence === "number" ? pending.confidence.toFixed(2) : "--";
+  panel.innerHTML = `<div><strong class="ok">${esc(pending.intent || "intent")}</strong></div><div>${esc(pending.summary || "")}</div><div>confidence: ${esc(confidence)} · confirm: ${pending.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(pending.arguments || {}))}</div>`;
+  confirmBtn.disabled = false;
+  cancelBtn.disabled = false;
+}
+
+async function resolveIntent() {
+  const text = $("intentInput").value.trim();
+  if (!text) {
+    toast("Enter a command first", true);
+    return;
+  }
+  const data = await api("/api/intent/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, context: intentContext() })
+  });
+  const resolved = data.resolved || {};
+  if (resolved.status === "ok") {
+    log(`INTENT ${resolved.intent}: ${resolved.summary}`);
+    toast(resolved.summary || "Intent resolved");
+  } else {
+    log(`INTENT ${resolved.status || "fallback"}: ${resolved.summary || "No match"}`);
+    toast(resolved.summary || "No matching Companion action", resolved.status !== "fallback");
+  }
+  await refresh();
+}
+
+async function confirmIntent() {
+  const data = await api("/api/intent/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true })
+  });
+  log(data.result?.message || "Intent executed");
+  toast(data.result?.message || "Intent executed");
+  $("intentInput").value = "";
+  await refresh();
+}
+
+async function cancelIntent() {
+  const data = await api("/api/intent/cancel", { method: "POST", body: "{}" });
+  log(data.message || "Pending intent cleared");
+  toast(data.message || "Pending intent cleared");
+  await refresh();
+}
+
 async function triggerSync(kind, options = {}) {
   const endpoints = { notes: "/api/sync-notes", voice: "/api/sync-voice" };
   const path = endpoints[kind];
@@ -322,6 +405,8 @@ function applyActionState() {
   const tracksReady = Boolean(latest.sd.ready);
   $("syncNotesBtn").disabled = busy || !tracksReady;
   $("syncVoiceBtn").disabled = busy || !tracksReady;
+  $("intentInput").disabled = busy;
+  $("intentResolveBtn").disabled = busy;
 
   $("importState").textContent = readyImport ? "READY" : "SD OFFLINE";
   $("importState").style.color = readyImport ? "var(--acid)" : "var(--bad)";
@@ -396,7 +481,8 @@ async function refresh() {
 
     applyActionState();
     updateQueuePanel();
-  renderSyncPanel();
+    renderSyncPanel();
+    renderPendingIntent();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -466,6 +552,27 @@ function setupSyncButtons() {
       toast(error.message, true);
     }
   };
+}
+
+function setupIntentButtons() {
+  $("intentResolveBtn").onclick = async () => {
+    try { await resolveIntent(); }
+    catch (error) { toast(error.message, true); }
+  };
+  $("intentConfirmBtn").onclick = async () => {
+    try { await confirmIntent(); }
+    catch (error) { toast(error.message, true); }
+  };
+  $("intentCancelBtn").onclick = async () => {
+    try { await cancelIntent(); }
+    catch (error) { toast(error.message, true); }
+  };
+  $("intentInput").addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      $("intentResolveBtn").click();
+    }
+  });
 }
 
 function setupDrop(kind) {
@@ -543,6 +650,7 @@ $("confirmFlash").onclick = async () => {
 setupDrop("book");
 setupDrop("music");
 setupSyncButtons();
+setupIntentButtons();
 renderErrorTemplates();
 setInterval(() => { $("localClock").textContent = new Date().toLocaleString(); }, 1000);
 refresh();

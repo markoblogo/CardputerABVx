@@ -36,6 +36,22 @@ HEBREW = {
     "ל": "l", "מ": "m", "ם": "m", "נ": "n", "ן": "n", "ס": "s", "ע": "a", "פ": "p", "ף": "p", "צ": "ts", "ץ": "ts",
     "ק": "k", "ר": "r", "ש": "sh", "ת": "t",
 }
+INTENT_NAMES = (
+    "sd_status",
+    "sync_time",
+    "sync_music",
+    "sync_books",
+    "sync_voice",
+    "prepare_browser_package",
+)
+INTENT_ARGUMENTS = {
+    "sd_status": {},
+    "sync_time": {"target": ("device",)},
+    "sync_music": {"target": ("sd",)},
+    "sync_books": {"target": ("sd",)},
+    "sync_voice": {"delete_after": bool},
+    "prepare_browser_package": {"profile": ("favorites",)},
+}
 
 def volume_score(path):
     return sum((path / name).is_dir() for name in LAYOUT)
@@ -91,6 +107,40 @@ def visible_files(directory, suffix=None):
     return [path for path in directory.iterdir()
             if path.is_file() and not path.name.startswith(".") and
             (suffix is None or path.suffix.lower() == suffix)]
+
+
+def intent_schema(intent):
+    if intent not in INTENT_ARGUMENTS:
+        raise RuntimeError(f"unsupported intent: {intent}")
+    return INTENT_ARGUMENTS[intent]
+
+
+def validate_intent_arguments(intent, arguments):
+    if intent not in INTENT_NAMES:
+        raise RuntimeError(f"unsupported intent: {intent}")
+    if not isinstance(arguments, dict):
+        raise RuntimeError("intent arguments must be an object")
+    schema = intent_schema(intent)
+    extra = sorted(set(arguments) - set(schema))
+    if extra:
+        raise RuntimeError(f"unexpected intent arguments: {', '.join(extra)}")
+    normalized = {}
+    for key, rule in schema.items():
+        if key not in arguments:
+            raise RuntimeError(f"missing intent argument: {key}")
+        value = arguments[key]
+        if rule is bool:
+            if not isinstance(value, bool):
+                raise RuntimeError(f"invalid boolean argument: {key}")
+            normalized[key] = value
+            continue
+        if isinstance(rule, tuple):
+            if value not in rule:
+                raise RuntimeError(f"invalid value for {key}: {value}")
+            normalized[key] = value
+            continue
+        raise RuntimeError(f"unsupported schema rule for {key}")
+    return normalized
 
 
 def is_safe_activity_id(value):
