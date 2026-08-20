@@ -8,6 +8,7 @@ import io
 import json
 import os
 import secrets
+import sys
 import datetime
 import shlex
 import subprocess
@@ -282,6 +283,31 @@ def summarize_intent(intent, arguments):
     return f"Run {intent}."
 
 
+def intent_action_label(intent):
+    labels = {
+        "sd_status": "Load SD Status",
+        "sync_time": "Sync Time",
+        "sync_music": "Sync Music to SD",
+        "sync_books": "Sync Books to SD",
+        "sync_voice": "Sync Voice",
+        "prepare_browser_package": "Prepare Browser Package",
+    }
+    return labels.get(intent, intent)
+
+
+def intent_preconditions(intent, status):
+    context = intent_context_from_status(status)
+    mapping = {
+        "sd_status": {},
+        "sync_time": {"usb_detected": context["usb_detected"]},
+        "sync_music": {"sd_detected": context["sd_detected"]},
+        "sync_books": {"sd_detected": context["sd_detected"]},
+        "sync_voice": {"sd_detected": context["sd_detected"], "voice_pending": context["voice_pending"]},
+        "prepare_browser_package": {"browser_package_enabled": context["browser_package_enabled"]},
+    }
+    return mapping.get(intent, {})
+
+
 def resolve_intent_request(payload, status):
     payload = validate_payload_json(payload)
     text = payload.get("text", "")
@@ -343,10 +369,23 @@ def resolve_intent_request(payload, status):
         "intent": intent,
         "arguments": arguments,
         "confidence": confidence,
+        "action_label": intent_action_label(intent),
+        "preconditions": intent_preconditions(intent, status),
         "summary": summarize_intent(intent, arguments),
         "requires_confirmation": intent in INTENT_CONFIRM_REQUIRED,
         "fallback_reason": None,
     }
+
+
+def pipeline_command(section):
+    sd = core.resolve_sd(SD_OVERRIDE)
+    script = PROJECT_ROOT / "tools" / "cardputer_local_pipeline.py"
+    return [sys.executable, str(script), f"sync-{section}", "--deploy", "--sd", str(sd)]
+
+
+def time_sync_command(url="http://192.168.4.1"):
+    script = PROJECT_ROOT / "tools" / "abvx_companion.py"
+    return [sys.executable, str(script), "sync-time", "--url", url]
 
 
 def idf_command(action, port=None):
@@ -443,11 +482,20 @@ class Handler(BaseHTTPRequestHandler):
             if route.path == "/api/intent/resolve":
                 status = device_status()
                 resolved = resolve_intent_request(self._read_json(), status)
-                if resolved["status"] == INTENT_OK:
+                execution = None
+                if resolved["status"] == INTENT_OK and not resolved["requires_confirmation"]:
+                    execution = self._execute_confirmed_intent(resolved["intent"], resolved["arguments"])
+                    STATE.clear_pending_intent()
+                elif resolved["status"] == INTENT_OK:
                     STATE.set_pending_intent(resolved)
                 else:
                     STATE.clear_pending_intent()
-                self._json(200, {"ok": True, "resolved": resolved, "pending_intent": STATE.snapshot()["pending_intent"]})
+                self._json(200, {
+                    "ok": True,
+                    "resolved": resolved,
+                    "execution": execution,
+                    "pending_intent": STATE.snapshot()["pending_intent"],
+                })
             elif route.path == "/api/intent/cancel":
                 STATE.clear_pending_intent()
                 self._json(200, {"ok": True, "message": "Pending intent cleared"})
@@ -508,26 +556,14 @@ class Handler(BaseHTTPRequestHandler):
         if intent == "sd_status":
             return {"message": "status loaded", "status": device_status()}
         if intent == "sync_time":
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                core.sync_time("http://192.168.4.1")
-            return {"message": output.getvalue().strip() or "Time synchronized"}
+            STATE.start("TIME SYNC", time_sync_command())
+            return {"message": "Time sync started"}
         if intent == "sync_music":
-            root = core.local_root()
-            mirror = root / "Exports" / "CardP SD Mirror"
-            source = core.default_music_source(root)
-            sd = core.resolve_sd(SD_OVERRIDE)
-            core.sync_music_mirror(source_dir=str(source), mirror_root=str(mirror))
-            core.deploy_mirror_to_sd(sd, mirror, "music")
-            return {"message": "Music synchronized to SD"}
+            STATE.start("SYNC MUSIC", pipeline_command("music"))
+            return {"message": "Music sync started"}
         if intent == "sync_books":
-            root = core.local_root()
-            mirror = root / "Exports" / "CardP SD Mirror"
-            source = core.default_books_source(root)
-            sd = core.resolve_sd(SD_OVERRIDE)
-            core.sync_books_mirror(source_dir=str(source), mirror_root=str(mirror))
-            core.deploy_mirror_to_sd(sd, mirror, "books")
-            return {"message": "Books synchronized to SD"}
+            STATE.start("SYNC BOOKS", pipeline_command("books"))
+            return {"message": "Books sync started"}
         if intent == "sync_voice":
             self._sync_voice(delete_after=arguments["delete_after"])
             return {"message": "Voice sync complete"}

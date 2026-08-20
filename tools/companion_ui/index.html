@@ -218,6 +218,7 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
 const TOKEN = "__ABVX_TOKEN__";
 const $ = id => document.getElementById(id);
 let latest = null;
+let lastIntentResult = null;
 let toastTimer = null;
 let syncPollingState = "IDLE";
 
@@ -314,16 +315,19 @@ function renderPendingIntent() {
   const confirmBtn = $("intentConfirmBtn");
   const cancelBtn = $("intentCancelBtn");
   const pending = latest && latest.job ? latest.job.pending_intent : null;
-  if (!pending) {
+  const resolved = pending || lastIntentResult;
+  if (!resolved) {
     panel.innerHTML = "No pending command.";
     confirmBtn.disabled = true;
     cancelBtn.disabled = true;
     return;
   }
-  const confidence = typeof pending.confidence === "number" ? pending.confidence.toFixed(2) : "--";
-  panel.innerHTML = `<div><strong class="ok">${esc(pending.intent || "intent")}</strong></div><div>${esc(pending.summary || "")}</div><div>confidence: ${esc(confidence)} · confirm: ${pending.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(pending.arguments || {}))}</div>`;
-  confirmBtn.disabled = false;
-  cancelBtn.disabled = false;
+  const confidence = typeof resolved.confidence === "number" ? resolved.confidence.toFixed(2) : "--";
+  const preconditions = resolved.preconditions ? esc(JSON.stringify(resolved.preconditions)) : "{}";
+  const kind = resolved.status === "reject" ? "bad" : "ok";
+  panel.innerHTML = `<div><strong class="${kind}">${esc(resolved.action_label || resolved.intent || resolved.status || "intent")}</strong></div><div>${esc(resolved.summary || "")}</div><div>confidence: ${esc(confidence)} · confirm: ${resolved.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(resolved.arguments || {}))}</div><div>preconditions: ${preconditions}</div>`;
+  confirmBtn.disabled = !pending;
+  cancelBtn.disabled = !pending && !lastIntentResult;
 }
 
 async function resolveIntent() {
@@ -338,9 +342,15 @@ async function resolveIntent() {
     body: JSON.stringify({ text, context: intentContext() })
   });
   const resolved = data.resolved || {};
+  lastIntentResult = resolved;
   if (resolved.status === "ok") {
     log(`INTENT ${resolved.intent}: ${resolved.summary}`);
-    toast(resolved.summary || "Intent resolved");
+    if (data.execution && data.execution.message) {
+      log(data.execution.message);
+      toast(data.execution.message);
+    } else {
+      toast(resolved.summary || "Intent resolved");
+    }
   } else {
     log(`INTENT ${resolved.status || "fallback"}: ${resolved.summary || "No match"}`);
     toast(resolved.summary || "No matching Companion action", resolved.status !== "fallback");
@@ -354,6 +364,7 @@ async function confirmIntent() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirm: true })
   });
+  lastIntentResult = null;
   log(data.result?.message || "Intent executed");
   toast(data.result?.message || "Intent executed");
   $("intentInput").value = "";
@@ -362,6 +373,7 @@ async function confirmIntent() {
 
 async function cancelIntent() {
   const data = await api("/api/intent/cancel", { method: "POST", body: "{}" });
+  lastIntentResult = null;
   log(data.message || "Pending intent cleared");
   toast(data.message || "Pending intent cleared");
   await refresh();
@@ -407,6 +419,7 @@ function applyActionState() {
   $("syncVoiceBtn").disabled = busy || !tracksReady;
   $("intentInput").disabled = busy;
   $("intentResolveBtn").disabled = busy;
+  $("intentConfirmBtn").disabled = busy || !latest.job.pending_intent;
 
   $("importState").textContent = readyImport ? "READY" : "SD OFFLINE";
   $("importState").style.color = readyImport ? "var(--acid)" : "var(--bad)";
@@ -477,6 +490,9 @@ async function refresh() {
       $("terminal").dataset.job = latest.job.output;
       $("terminal").textContent = latest.job.output;
       $("terminal").scrollTop = $("terminal").scrollHeight;
+    }
+    if (latest.job.pending_intent) {
+      lastIntentResult = latest.job.pending_intent;
     }
 
     applyActionState();
