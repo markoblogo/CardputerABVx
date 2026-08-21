@@ -113,7 +113,7 @@ def intent_preconditions(intent, status):
     }
     mapping = {
         "sd_status": {},
-        "sync_time": {"usb_detected": context["usb_detected"]},
+        "sync_time": {},
         "sync_music": {"sd_detected": context["sd_detected"]},
         "sync_books": {"sd_detected": context["sd_detected"]},
         "sync_voice": {"sd_detected": context["sd_detected"], "voice_pending": context["voice_pending"]},

@@ -1,0 +1,60 @@
+import importlib.util
+import sys
+from pathlib import Path
+
+
+CORE_PATH = Path(__file__).parents[1] / "tools" / "abvx_companion.py"
+CORE_SPEC = importlib.util.spec_from_file_location("abvx_companion", CORE_PATH)
+CORE_MODULE = importlib.util.module_from_spec(CORE_SPEC)
+sys.modules["abvx_companion"] = CORE_MODULE
+CORE_SPEC.loader.exec_module(CORE_MODULE)
+
+MODULE_PATH = Path(__file__).parents[1] / "tools" / "needle_intent_adapter.py"
+SPEC = importlib.util.spec_from_file_location("needle_intent_adapter", MODULE_PATH)
+MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules["needle_intent_adapter"] = MODULE
+SPEC.loader.exec_module(MODULE)
+
+
+def _status(sd_ready=True, voice_count=1):
+    return {
+        "sd": {"ready": sd_ready},
+        "usb_ports": [],
+        "backup": {"voice": voice_count},
+    }
+
+
+def test_rule_based_music_resolve_contract():
+    adapter = MODULE.build_intent_adapter("rule_based")
+    resolved = adapter.resolve({"text": "sync music to sd", "context": {}}, _status())
+    assert resolved["status"] == "ok"
+    assert resolved["intent"] == "sync_music"
+    assert resolved["arguments"] == {"target": "sd"}
+    assert resolved["requires_confirmation"] is True
+    assert resolved["adapter"] == "rule_based"
+
+
+def test_rule_based_voice_empty_fallback():
+    adapter = MODULE.build_intent_adapter("rule_based")
+    resolved = adapter.resolve({"text": "sync voice", "context": {}}, _status(voice_count=0))
+    assert resolved["status"] == "fallback"
+    assert resolved["fallback_reason"] == "voice_empty"
+    assert resolved["target_section"] == "guide"
+
+
+def test_needle_stub_envelope():
+    adapter = MODULE.build_intent_adapter("needle_stub")
+    resolved = adapter.resolve({"text": "show sd status", "context": {"sd_detected": True}}, _status())
+    assert resolved["status"] == "ok"
+    assert resolved["adapter"] == "needle_stub"
+    assert resolved["adapter_mode"] == "stub"
+    assert resolved["adapter_meta"]["backend_family"] == "needle"
+    assert resolved["adapter_request"]["model_input"]["allowed_intents"] == list(MODULE.core.INTENT_NAMES)
+    assert resolved["adapter_response"]["intent"] == "sd_status"
+
+
+if __name__ == "__main__":
+    test_rule_based_music_resolve_contract()
+    test_rule_based_voice_empty_fallback()
+    test_needle_stub_envelope()
+    print("needle intent adapter test: OK")

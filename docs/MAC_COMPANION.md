@@ -230,6 +230,7 @@ Response fields:
 - `fallback_reason`: bounded string or `null`.
 - `adapter`: backend name that produced the result.
 - `adapter_meta`: optional backend descriptor for UI/debug visibility.
+- Companion UI may surface the active adapter backend so the user can tell whether routing is `rule_based`, `needle_stub`, or a future real backend.
 
 ### Fallback and reject shapes
 
