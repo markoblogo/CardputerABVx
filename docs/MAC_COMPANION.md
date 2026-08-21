@@ -201,6 +201,7 @@ Rules:
 - `context` is optional and contains only bounded Companion state flags.
 - No raw filesystem paths are accepted from the model-facing request.
 - The resolver may accept bounded mixed-language shortcuts, including simple Russian, English, and translit variants, but only when they map onto the same fixed intent enum.
+- The adapter backend is replaceable. Current default is `rule_based`; a future `needle_stub`/`needle` backend must preserve the same request and response contract.
 
 ### Resolve response
 
@@ -227,6 +228,8 @@ Response fields:
 - `summary`: short human-readable explanation for the UI.
 - `requires_confirmation`: true for any mutating operation.
 - `fallback_reason`: bounded string or `null`.
+- `adapter`: backend name that produced the result.
+- `adapter_meta`: optional backend descriptor for UI/debug visibility.
 
 ### Fallback and reject shapes
 
@@ -351,6 +354,16 @@ Out of scope request:
 - Execution continues only after explicit user confirmation for mutating intents.
 - Confirmed execution must call the same fixed handlers already used by the current UI.
 - The resolver may not fabricate unavailable state; it can only use supplied `context` and existing Companion detection.
+- Swapping adapters may change how the intent is inferred, but not what intents exist, how arguments are validated, or how execution is confirmed.
+
+### Stub backend contract
+
+`needle_stub` is allowed to expose a more runtime-like envelope while still delegating actual inference to bounded local rules.
+
+- `adapter_request` may describe model-facing input such as text, bounded context, and allowed intents.
+- `adapter_response` may describe model-like output such as chosen intent, arguments, confidence, and status.
+- These fields are diagnostic and compatibility-oriented only; they do not create a second execution path.
+- A future real backend should preserve these outer shapes so the UI and confirm flow do not need redesign.
 
 ### Confirmation card contract
 

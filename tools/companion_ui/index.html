@@ -91,6 +91,7 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
           <div class="device-line"><span>ESP-IDF</span><b id="idfState">SCANNING</b></div>
           <div class="device-line"><span>FIRMWARE</span><b id="fwState">SCANNING</b></div>
           <div class="device-line"><span>IMPORT READY</span><b id="importState">--</b></div>
+          <div class="device-line"><span>INTENT ADAPTER</span><b id="intentAdapterState">SCANNING</b></div>
           <div class="actions"><button id="refreshBtn" class="btn">REFRESH</button><button id="timeBtn" class="btn primary">SYNC TIME</button></div>
         </div>
       </div>
@@ -371,7 +372,8 @@ function renderPendingIntent() {
   const target = resolved.target_section ? `<div class="intent-target">target: ${esc(sectionTitle(resolved.target_section))}</div>` : "";
   const jump = resolved.target_section ? `<div class="intent-jump">Use JUMP TO PANEL to focus the current workflow section.</div>` : "";
   const fallback = resolved.fallback_reason ? `<div>${esc(fallbackCopy(resolved.fallback_reason))}</div>` : "";
-  panel.innerHTML = `<div><strong class="${kind}">${esc(resolved.action_label || resolved.intent || resolved.status || "intent")}</strong></div><div>${esc(resolved.summary || "")}</div>${fallback}${target}<div>confidence: ${esc(confidence)} · confirm: ${resolved.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(resolved.arguments || {}))}</div><div>preconditions: ${preconditions}</div>${jump}`;
+  const adapter = resolved.adapter ? `<div>adapter: ${esc(resolved.adapter)}</div>` : "";
+  panel.innerHTML = `<div><strong class="${kind}">${esc(resolved.action_label || resolved.intent || resolved.status || "intent")}</strong></div><div>${esc(resolved.summary || "")}</div>${fallback}${target}<div>confidence: ${esc(confidence)} · confirm: ${resolved.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(resolved.arguments || {}))}</div><div>preconditions: ${preconditions}</div>${adapter}${jump}`;
   confirmBtn.disabled = !pending;
   cancelBtn.disabled = !pending && !lastIntentResult;
 }
@@ -527,6 +529,8 @@ async function refresh() {
     $("usbState").textContent = latest.usb_ports.length ? `${latest.usb_ports.length} FOUND` : "NOT FOUND";
     $("idfState").textContent = latest.idf_ready ? "READY" : "MISSING";
     $("fwState").textContent = latest.firmware.ready ? fmt(latest.firmware.size) : "NOT BUILT";
+    const adapter = latest.intent_adapter || {};
+    $("intentAdapterState").textContent = adapter.mode ? `${adapter.name || "unknown"} / ${adapter.mode}` : (adapter.name || "UNKNOWN");
 
     const p = $("portSelect");
     const oldPort = p.value;
