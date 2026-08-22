@@ -366,6 +366,23 @@ Out of scope request:
 - These fields are diagnostic and compatibility-oriented only; they do not create a second execution path.
 - A future real backend should preserve these outer shapes so the UI and confirm flow do not need redesign.
 
+### Real Needle backend contract
+
+The real backend uses the official Needle Python package and the one-turn `complete()` API.
+
+- Install path: `pip install cactus-needle`
+- Runtime selector: `ABVX_INTENT_ADAPTER=needle`
+- Optional confidence gate: `ABVX_INTENT_CONFIDENCE=0.75`
+- Optional custom weights: `ABVX_INTENT_NEEDLE_WEIGHTS=/path/to/model.cact`
+
+Backend rules:
+
+- Companion passes raw JSON-schema tools, not Python side-effecting functions.
+- Needle is used only for intent selection and argument filling; Companion still owns execution.
+- Empty calls become `out_of_scope`.
+- Confidence below the configured threshold becomes `low_confidence`.
+- Runtime/import/init failures become `backend_unavailable` and must degrade safely in the UI.
+
 ### Confirmation card contract
 
 The confirmation UI should show:

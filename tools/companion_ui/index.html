@@ -340,6 +340,9 @@ function fallbackCopy(reason) {
     missing_sd: "Insert or mount the ABVx SD card, then retry from the Device panel.",
     voice_empty: "Nothing is queued for voice sync right now. Check the backup/sync panel or capture new voice items first.",
     feature_disabled: "This feature is disabled in the current build. Use the existing visible Companion panels only.",
+    backend_unavailable: "Needle runtime is unavailable or not initialized. Install the optional backend or switch back to the rule-based adapter.",
+    invalid_arguments: "The backend returned invalid arguments. Review the suggested panel and continue manually.",
+    low_confidence: "Confidence is below the current threshold. Review the target panel and confirm manually if needed.",
     out_of_scope: "Use one of the fixed Companion commands shown below, or continue through the normal UI."
   }[reason] || "";
 }

@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 
@@ -53,8 +54,47 @@ def test_needle_stub_envelope():
     assert resolved["adapter_response"]["intent"] == "sd_status"
 
 
+def test_needle_runtime_envelope_with_fake_module():
+    fake_module = types.SimpleNamespace()
+
+    class FakeAgent:
+        def __init__(self, tools=None, system=None, weights=None):
+            self.tools = tools or []
+            self.system = system or []
+            self.weights = weights
+
+        def reset(self):
+            return None
+
+        def complete(self, text, max_new_tokens=256):
+            return {
+                "type": "call",
+                "success": True,
+                "error": None,
+                "error_code": None,
+                "function_calls": [{"name": "sync_music", "arguments": {"target": "sd"}}],
+                "reasoning": "'music' -> sync_music",
+                "confidence": 0.95,
+                "prefill_tps": 1234.0,
+                "decode_tps": 456.0,
+                "peak_ram_mb": 28.0,
+            }
+
+    fake_module.Needle = FakeAgent
+    sys.modules["needle"] = fake_module
+    adapter = MODULE.build_intent_adapter("needle")
+    resolved = adapter.resolve({"text": "sync music to sd", "context": {}}, _status())
+    assert resolved["status"] == "ok"
+    assert resolved["adapter"] == "needle"
+    assert resolved["adapter_mode"] == "runtime"
+    assert resolved["adapter_response"]["function_calls"][0]["name"] == "sync_music"
+    assert resolved["arguments"] == {"target": "sd"}
+    sys.modules.pop("needle", None)
+
+
 if __name__ == "__main__":
     test_rule_based_music_resolve_contract()
     test_rule_based_voice_empty_fallback()
     test_needle_stub_envelope()
+    test_needle_runtime_envelope_with_fake_module()
     print("needle intent adapter test: OK")
