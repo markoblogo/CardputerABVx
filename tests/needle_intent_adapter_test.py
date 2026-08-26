@@ -58,10 +58,11 @@ def test_needle_runtime_envelope_with_fake_module():
     fake_module = types.SimpleNamespace()
 
     class FakeAgent:
-        def __init__(self, tools=None, system=None, weights=None):
+        def __init__(self, tools=None, system=None, weights=None, tool_index_path=None):
             self.tools = tools or []
-            self.system = system or []
+            self.system = system or ""
             self.weights = weights
+            self.tool_index_path = tool_index_path
 
         def reset(self):
             return None

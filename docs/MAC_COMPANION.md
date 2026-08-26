@@ -374,6 +374,7 @@ The real backend uses the official Needle Python package and the one-turn `compl
 - Runtime selector: `ABVX_INTENT_ADAPTER=needle`
 - Optional confidence gate: `ABVX_INTENT_CONFIDENCE=0.75`
 - Optional custom weights: `ABVX_INTENT_NEEDLE_WEIGHTS=/path/to/model.cact`
+- Optional persisted tool index: `ABVX_INTENT_NEEDLE_TOOL_INDEX=~/Library/Application Support/ABVx Companion/needle-tools.idx`
 
 Backend rules:
 
@@ -382,6 +383,20 @@ Backend rules:
 - Empty calls become `out_of_scope`.
 - Confidence below the configured threshold becomes `low_confidence`.
 - Runtime/import/init failures become `backend_unavailable` and must degrade safely in the UI.
+- System facts must be passed as a single Needle `system` string and refreshed when host-side SD or backup state changes.
+
+### Host-side runtime wiring
+
+Current practical runtime path:
+
+- Run Companion itself under a Python interpreter that has `cactus-needle` installed.
+- For Terminal launch, use that interpreter directly.
+- For `ABVx Companion.app`, the launcher now prefers:
+  - `ABVX_COMPANION_PYTHON` when explicitly set,
+  - `~/Library/Application Support/ABVx Companion/.venv/bin/python3`,
+  - then the normal host `python3`.
+
+This keeps the Companion surface unchanged while allowing a dedicated host-side Needle runtime.
 
 ### Confirmation card contract
 
