@@ -209,9 +209,8 @@ It opens `http://127.0.0.1:8765` and provides automatic SD/USB status, drag-and-
 Optional Needle runtime for Companion intent routing:
 
 ```sh
-python3 -m venv /tmp/cardputer-needle-venv
-/tmp/cardputer-needle-venv/bin/python -m pip install cactus-needle
-ABVX_INTENT_ADAPTER=needle /tmp/cardputer-needle-venv/bin/python ./tools/abvx_companion_app.py
+zsh tools/setup_abvx_companion_needle.zsh
+ABVX_INTENT_ADAPTER=needle "$HOME/Library/Application Support/ABVx Companion/.venv/bin/python" ./tools/abvx_companion_app.py
 ```
 
 If you launch `tools/ABVx Companion.app`, it now prefers `ABVX_COMPANION_PYTHON` or `~/Library/Application Support/ABVx Companion/.venv/bin/python3` when present, so the UI can use the same host-side Needle runtime without changing the Companion surface.

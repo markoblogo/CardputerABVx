@@ -398,6 +398,27 @@ Current practical runtime path:
 
 This keeps the Companion surface unchanged while allowing a dedicated host-side Needle runtime.
 
+### Reproducible macOS setup and custom-weights verify
+
+Install the optional runtime into the exact location the `.app` launcher already prefers:
+
+```sh
+zsh tools/setup_abvx_companion_needle.zsh
+```
+
+The script creates or reuses `~/Library/Application Support/ABVx Companion/.venv`, installs `cactus-needle`, and verifies that `import needle` succeeds. It does not enable the `needle` adapter globally.
+
+When a real `.cact` model file is available, run the live Companion check with an explicit path:
+
+```sh
+ABVX_INTENT_ADAPTER=needle \
+ABVX_INTENT_NEEDLE_WEIGHTS=/absolute/path/to/model.cact \
+"$HOME/Library/Application Support/ABVx Companion/.venv/bin/python" \
+tools/abvx_companion_app.py --no-open
+```
+
+Acceptance for that separate check: `/api/status` reports `intent_adapter.name = needle` and the selected weights path; `POST /api/intent/resolve` completes one supported read-only intent through `adapter_mode = runtime`; no mutating action is executed without the existing confirmation flow.
+
 ### Confirmation card contract
 
 The confirmation UI should show:
