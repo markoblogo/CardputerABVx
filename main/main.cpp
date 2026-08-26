@@ -35,6 +35,8 @@
 #include <minimp3.h>
 
 #include "assets/abvx_splash.h"
+#include "gnss_service.h"
+#include "journey_service.h"
 #include "lib/adafruit_tca8418/Adafruit_TCA8418.h"
 
 namespace {
@@ -163,7 +165,7 @@ uint32_t connection_upload_last_activity_ms = 0;
 
 LGFX_Sprite canvas(&M5.Display);
 
-enum class Screen { Launcher, Dashboard, MusicList, MusicInfo, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, NotesDeleteConfirm, RecorderList, RecorderRecording, RecorderPlaying, RecorderDeleteConfirm, TimeApp, FilesList, FilesInfo, FilesDeleteConfirm, Randomizer, HabitsList, HabitsStats, HabitsManage, HabitsEdit, HabitsDisableConfirm, Settings, Connections, InboxList, InboxDetail, Message };
+enum class Screen { Launcher, Dashboard, MusicList, MusicInfo, MusicPlaying, ReaderList, ReaderView, ReaderSpeed, NotesList, NotesView, NotesEdit, NotesDeleteConfirm, RecorderList, RecorderRecording, RecorderPlaying, RecorderDeleteConfirm, TimeApp, FilesList, FilesInfo, FilesDeleteConfirm, Randomizer, HabitsList, HabitsStats, HabitsManage, HabitsEdit, HabitsDisableConfirm, Settings, Connections, InboxList, InboxDetail, GnssLab, Running, Message };
 enum class Key { None, Up, Down, Left, Right, Ok, Back, Home, One, Two, Backspace };
 enum class VolumeMode { Mute = 0, Mid = 1, Loud = 2 };
 enum class SpeedMode { OneWord = 0, TwoWords = 1, Line = 2 };
@@ -240,6 +242,10 @@ std::string message_body;
 MessageReturn message_return = MessageReturn::Launcher;
 uint32_t message_hold_until_ms = 0;
 ResumeTarget last_resume_target = ResumeTarget::Music;
+GnssService gnss;
+JourneyService journey;
+uint32_t gnss_last_draw_ms = 0;
+std::string journey_notice;
 
 std::vector<std::string> tracks;
 std::map<std::string, std::string> music_titles;
@@ -4068,6 +4074,12 @@ void openLauncherApp(int index)
         refreshInboxManual();
         blockInput(250);
     }
+    else if (index == 11) {
+        const char* error = nullptr;
+        if (gnss.begin(&error)) screen = Screen::GnssLab;
+        else showMessage("GNSS", error ? error : "UART unavailable");
+        blockInput(250);
+    }
 }
 
 const char* resumeName()
@@ -4197,7 +4209,7 @@ void drawCyberAccent()
 
 void drawLauncher()
 {
-    static const char* labels[] = {"[#] LISTEN", "[=] READ", "[+] WRITE", "[o] VOICE", "[~] TIME", "[*] FILES", "[?] DECIDE", "[x] ROUTINES", "[%] SETTINGS", "[~] TRANSFER", "[>] INBOX"};
+    static const char* labels[] = {"[#] LISTEN", "[=] READ", "[+] WRITE", "[o] VOICE", "[~] TIME", "[*] FILES", "[?] DECIDE", "[x] ROUTINES", "[%] SETTINGS", "[~] TRANSFER", "[>] INBOX", "[^] JOURNEY"};
     constexpr int launcher_count = sizeof(labels) / sizeof(labels[0]);
     canvas.fillScreen(uiBg());
     drawCyberAccent();
@@ -7302,6 +7314,87 @@ void drawConnections()
         canvas.pushSprite(0, 0);
 }
 
+void drawGnssLab()
+{
+    const uint32_t now = M5.millis();
+    const GnssFix& fix = gnss.fix();
+    const GnssStatus status = gnss.status(now);
+    const char* label = "OFF";
+    if (status == GnssStatus::Searching) label = "SEARCHING";
+    else if (status == GnssStatus::NoFix) label = "NO FIX";
+    else if (status == GnssStatus::Fix) label = "FIX";
+    else if (status == GnssStatus::Stale) label = "STALE";
+    else if (status == GnssStatus::Error) label = "UART ERROR";
+
+    canvas.fillScreen(uiBg());
+    canvas.setTextSize(2);
+    canvas.setTextColor(uiFg(), uiBg());
+    canvas.setCursor(8, 8);
+    canvas.print(journey.active() ? "JOURNEY" : "GNSS LAB");
+    drawBatteryWidget(166, 8);
+    canvas.setTextSize(2);
+    canvas.setTextColor(status == GnssStatus::Fix ? uiAccent() : uiDim(), uiBg());
+    canvas.setCursor(8, 34);
+    canvas.print(label);
+    canvas.setTextSize(1);
+    canvas.setTextColor(uiFg(), uiBg());
+    canvas.setCursor(8, 58);
+    if (status == GnssStatus::Fix) {
+        canvas.printf("LAT %.5f", fix.latitude);
+        canvas.setCursor(8, 70);
+        canvas.printf("LON %.5f", fix.longitude);
+        canvas.setCursor(8, 82);
+        canvas.printf("SPD %.1f km/h ALT %.0f m", fix.speed_mps * 3.6, fix.altitude_m);
+        canvas.setCursor(8, 94);
+        canvas.printf("SAT %d  NMEA %lu", fix.satellites, static_cast<unsigned long>(fix.sentence_count));
+    } else {
+        canvas.print(fix.seen ? "NMEA received; waiting for fix" : "Waiting for NMEA UART data");
+        canvas.setCursor(8, 74);
+        canvas.printf("NMEA %lu", static_cast<unsigned long>(fix.sentence_count));
+    }
+    canvas.setTextColor(uiAccent(), uiBg());
+    canvas.setCursor(8, 106);
+    if (journey.active()) canvas.printf("%s  %s", journey.id().c_str(), journey_notice.empty() ? journey.detail().c_str() : journey_notice.c_str());
+    else canvas.print(journey.detail().c_str());
+    canvas.setTextColor(uiDim(), uiBg());
+    canvas.setCursor(8, 122);
+    canvas.print(journey.active() ? "OK STOP  / RUN  M MUSIC" : "OK START  GO BACK");
+    canvas.pushSprite(0, 0);
+}
+
+void drawRunning()
+{
+    const uint32_t now = M5.millis();
+    const uint32_t elapsed = journey.elapsedSeconds(now);
+    const double pace = journey.paceSecondsPerKm(now);
+    canvas.fillScreen(uiBg());
+    canvas.setTextColor(uiFg(), uiBg());
+    canvas.setTextSize(2);
+    canvas.setCursor(8, 8);
+    canvas.print("RUNNING");
+    drawBatteryWidget(166, 8);
+    canvas.setTextSize(4);
+    canvas.setTextColor(uiAccent(), uiBg());
+    canvas.setCursor(8, 32);
+    canvas.printf("%.2f", journey.distanceMeters() / 1000.0);
+    canvas.setTextSize(1);
+    canvas.setCursor(168, 58);
+    canvas.print("km");
+    canvas.setTextSize(2);
+    canvas.setTextColor(uiFg(), uiBg());
+    canvas.setCursor(8, 72);
+    if (pace > 0.0) canvas.printf("PACE %lu:%02lu /km", static_cast<unsigned long>(pace / 60), static_cast<unsigned long>(pace) % 60);
+    else canvas.print("PACE --:-- /km");
+    canvas.setCursor(8, 94);
+    canvas.printf("TIME %02lu:%02lu:%02lu", static_cast<unsigned long>(elapsed / 3600),
+                  static_cast<unsigned long>((elapsed / 60) % 60), static_cast<unsigned long>(elapsed % 60));
+    canvas.setTextSize(1);
+    canvas.setTextColor(uiDim(), uiBg());
+    canvas.setCursor(8, 122);
+    canvas.print("OK STOP  GO JOURNEY  M MUSIC");
+    canvas.pushSprite(0, 0);
+}
+
 void drawMessage()
 {
     canvas.fillScreen(uiBg());
@@ -7362,6 +7455,8 @@ void drawIfDirty()
     else if (screen == Screen::Connections) drawConnections();
     else if (screen == Screen::InboxList) drawInboxList();
     else if (screen == Screen::InboxDetail) drawInboxDetail();
+    else if (screen == Screen::GnssLab) drawGnssLab();
+    else if (screen == Screen::Running) drawRunning();
     else drawMessage();
     dirty = false;
 }
@@ -7602,6 +7697,8 @@ void handleKey(KeyEvent ev)
         screen != Screen::HabitsList &&
         screen != Screen::Launcher &&
         screen != Screen::Dashboard &&
+        screen != Screen::GnssLab &&
+        screen != Screen::Running &&
         screen != Screen::MusicList &&
         screen != Screen::MusicInfo &&
         screen != Screen::MusicPlaying) return;
@@ -7613,8 +7710,8 @@ void handleKey(KeyEvent ev)
     if (handleOneButtonCapture(ev)) return;
 
     if (screen == Screen::Launcher) {
-        if (ev.key == Key::Up) { launcher_index = (launcher_index + 10) % 11; pulseUi(); }
-        else if (ev.key == Key::Down) { launcher_index = (launcher_index + 1) % 11; pulseUi(); }
+        if (ev.key == Key::Up) { launcher_index = (launcher_index + 11) % 12; pulseUi(); }
+        else if (ev.key == Key::Down) { launcher_index = (launcher_index + 1) % 12; pulseUi(); }
         else if (ev.key == Key::Home) { launcher_index = 0; scanMusic(); screen = Screen::MusicList; pulseUi(); }
         else if (ev.key == Key::Two) resumeContext();
         else if (ev.key == Key::Ok) openLauncherApp(launcher_index);
@@ -8465,6 +8562,57 @@ void handleKey(KeyEvent ev)
         return;
     }
 
+    if (screen == Screen::GnssLab) {
+        if (ev.key == Key::Ok) {
+            if (journey.active()) {
+                journey.stop();
+                journey_notice.clear();
+            }
+            else {
+                const char* error = nullptr;
+                if (!initSd()) showMessage("JOURNEY", "SD not ready");
+                else if (!journey.start(M5.millis(), &error)) showMessage("JOURNEY", error ? error : "start failed");
+                else journey_notice.clear();
+            }
+            blockInput(300);
+        } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            if (journey.active()) journey_notice = "STOP FIRST";
+            else {
+                screen = Screen::Launcher;
+                blockInput(250);
+            }
+        } else if (ev.key == Key::Right && journey.active()) {
+            journey_notice.clear();
+            screen = Screen::Running;
+            blockInput(250);
+        } else if (shortcutChar(ev) == 'm' && journey.active()) {
+            journey_notice.clear();
+            scanMusic();
+            screen = Screen::MusicList;
+            blockInput(250);
+        }
+        dirty = true;
+        return;
+    }
+
+    if (screen == Screen::Running) {
+        if (ev.key == Key::Ok) {
+            journey.stop();
+            journey_notice.clear();
+            screen = Screen::GnssLab;
+            blockInput(300);
+        } else if (ev.key == Key::Home || ev.key == Key::Back) {
+            screen = Screen::GnssLab;
+            blockInput(250);
+        } else if (shortcutChar(ev) == 'm') {
+            scanMusic();
+            screen = Screen::MusicList;
+            blockInput(250);
+        }
+        dirty = true;
+        return;
+    }
+
     if (screen == Screen::Message) {
         if (M5.millis() < message_hold_until_ms) return;
         if (ev.key == Key::Home || ev.key == Key::Back || ev.key == Key::Ok) {
@@ -8506,11 +8654,25 @@ extern "C" void app_main(void)
         processPersistence();
         processConnectionUploadOps();
         processConnectionTimeSync();
+        uint32_t now = M5.millis();
+        if (screen == Screen::GnssLab || screen == Screen::Running || journey.active()) {
+            gnss.poll(now);
+            const bool journey_write_safe = screen == Screen::GnssLab ||
+                screen == Screen::Launcher || screen == Screen::Dashboard ||
+                screen == Screen::MusicList || screen == Screen::MusicInfo ||
+                screen == Screen::MusicPlaying || screen == Screen::Running;
+            if (journey_write_safe) journey.appendIfDue(gnss.fix(), now);
+        }
+        if (screen == Screen::GnssLab || screen == Screen::Running) {
+            if (now - gnss_last_draw_ms >= 500) {
+                gnss_last_draw_ms = now;
+                dirty = true;
+            }
+        }
         if (connection_dirty) {
             connection_dirty = false;
             dirty = true;
         }
-        uint32_t now = M5.millis();
         if (screen == Screen::Launcher && now < ui_anim_until_ms && now - ui_anim_last_frame_ms >= 33) {
             ui_anim_last_frame_ms = now;
             dirty = true;

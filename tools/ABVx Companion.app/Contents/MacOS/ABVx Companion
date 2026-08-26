@@ -10,10 +10,40 @@ ROOT="$(cd "$HERE/../../../.." && pwd)"
 RESOURCES="$HERE/../Resources"
 SUPPORT="$HOME/Library/Application Support/ABVx Companion"
 mkdir -p "$SUPPORT/companion_ui"
-cp "$RESOURCES/abvx_companion.py" "$SUPPORT/abvx_companion.py"
-cp "$RESOURCES/abvx_companion_app.py" "$SUPPORT/abvx_companion_app.py"
-cp "$RESOURCES/companion_ui/index.html" "$SUPPORT/companion_ui/index.html"
-PYTHON="/opt/homebrew/bin/python3"
+if [[ -f "$ROOT/tools/abvx_companion.py" ]]; then
+  cp "$ROOT/tools/abvx_companion.py" "$SUPPORT/abvx_companion.py"
+else
+  cp "$RESOURCES/abvx_companion.py" "$SUPPORT/abvx_companion.py"
+fi
+if [[ -f "$ROOT/tools/abvx_companion_app.py" ]]; then
+  cp "$ROOT/tools/abvx_companion_app.py" "$SUPPORT/abvx_companion_app.py"
+else
+  cp "$RESOURCES/abvx_companion_app.py" "$SUPPORT/abvx_companion_app.py"
+fi
+if [[ -f "$ROOT/tools/needle_intent_adapter.py" ]]; then
+  cp "$ROOT/tools/needle_intent_adapter.py" "$SUPPORT/needle_intent_adapter.py"
+elif [[ -f "$RESOURCES/needle_intent_adapter.py" ]]; then
+  cp "$RESOURCES/needle_intent_adapter.py" "$SUPPORT/needle_intent_adapter.py"
+fi
+if [[ -f "$ROOT/tools/companion_ui/index.html" ]]; then
+  cp "$ROOT/tools/companion_ui/index.html" "$SUPPORT/companion_ui/index.html"
+else
+  cp "$RESOURCES/companion_ui/index.html" "$SUPPORT/companion_ui/index.html"
+fi
+PYTHON="${ABVX_COMPANION_PYTHON:-}"
+if [[ -n "$PYTHON" && ! -x "$PYTHON" ]]; then
+  echo "ABVX_COMPANION_PYTHON is not executable: $PYTHON" >&2
+  exit 1
+fi
+if [[ -z "$PYTHON" && -x "$SUPPORT/.venv/bin/python3" ]]; then
+  PYTHON="$SUPPORT/.venv/bin/python3"
+fi
+if [[ -z "$PYTHON" && -x "$SUPPORT/.venv/bin/python" ]]; then
+  PYTHON="$SUPPORT/.venv/bin/python"
+fi
+if [[ -z "$PYTHON" ]]; then
+  PYTHON="/opt/homebrew/bin/python3"
+fi
 if [[ ! -x "$PYTHON" ]]; then
   PYTHON="$(command -v python3)"
 fi

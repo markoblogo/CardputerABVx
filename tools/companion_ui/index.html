@@ -58,7 +58,7 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
 .rules{margin-top:12px}.rules .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #273027;font-size:10px}.rules b{color:var(--text)}.rules .code{color:var(--muted);text-align:right;word-break:break-all}
 .list{display:grid;gap:8px;margin:0;padding-left:16px;font-size:10px;line-height:1.45;color:var(--muted)}
 .error-templates{margin-top:10px;display:grid;gap:6px;font-size:10px}.error-templates .rule{padding:8px;border:1px dashed #2f3a31}.error-templates .pattern{color:var(--acid)} .error-templates .hint{color:var(--muted)}
-.intent-shell{display:grid;gap:10px}.intent-input{width:100%;background:#080c09;color:var(--text);border:1px solid var(--line);padding:11px 12px}.intent-result{min-height:78px;border:1px dashed #2c3830;padding:10px;font-size:10px;line-height:1.5;color:var(--muted);background:#090d0a}.intent-result strong{color:var(--text)}.intent-result .ok{color:var(--acid)}.intent-result .bad{color:#ffb0a9}.intent-actions{display:flex;gap:9px;flex-wrap:wrap}
+.intent-shell{display:grid;gap:10px}.intent-input{width:100%;background:#080c09;color:var(--text);border:1px solid var(--line);padding:11px 12px}.intent-result{min-height:78px;border:1px dashed #2c3830;padding:10px;font-size:10px;line-height:1.5;color:var(--muted);background:#090d0a}.intent-result strong{color:var(--text)}.intent-result .ok{color:var(--acid)}.intent-result .bad{color:#ffb0a9}.intent-actions{display:flex;gap:9px;flex-wrap:wrap}.intent-examples{display:grid;gap:4px;font-size:9px;color:var(--muted);padding-top:2px}.intent-examples code{color:var(--text);cursor:pointer}
 .intent-target{color:var(--acid)}
 .intent-jump{font-size:9px;color:var(--muted)}
 .section-flash{animation:sectionFlash 1.2s ease-out 1}
@@ -91,6 +91,7 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
           <div class="device-line"><span>ESP-IDF</span><b id="idfState">SCANNING</b></div>
           <div class="device-line"><span>FIRMWARE</span><b id="fwState">SCANNING</b></div>
           <div class="device-line"><span>IMPORT READY</span><b id="importState">--</b></div>
+          <div class="device-line"><span>INTENT ADAPTER</span><b id="intentAdapterState">SCANNING</b></div>
           <div class="actions"><button id="refreshBtn" class="btn">REFRESH</button><button id="timeBtn" class="btn primary">SYNC TIME</button></div>
         </div>
       </div>
@@ -135,6 +136,16 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
             <button id="intentCancelBtn" class="btn" disabled>CANCEL</button>
           </div>
           <div id="intentResult" class="intent-result">No pending command.</div>
+          <div class="intent-examples">
+            <div>Try: <code data-intent-example="sync music to sd">sync music to sd</code></div>
+            <div>Try: <code data-intent-example="sync books to sd">sync books to sd</code></div>
+            <div>Try: <code data-intent-example="sync voice">sync voice</code></div>
+            <div>Try: <code data-intent-example="sync time">sync time</code></div>
+            <div>Try: <code data-intent-example="show sd status">show sd status</code></div>
+            <div>Try: <code data-intent-example="синк музыка на sd">синк музыка на sd</code></div>
+            <div>Try: <code data-intent-example="обновить книги">обновить книги</code></div>
+            <div>Try: <code data-intent-example="покажи статус карты">покажи статус карты</code></div>
+          </div>
         </div>
       </article>
       <article class="card">
@@ -324,6 +335,18 @@ function sectionTitle(sectionId) {
   }[sectionId] || sectionId;
 }
 
+function fallbackCopy(reason) {
+  return {
+    missing_sd: "Insert or mount the ABVx SD card, then retry from the Device panel.",
+    voice_empty: "Nothing is queued for voice sync right now. Check the backup/sync panel or capture new voice items first.",
+    feature_disabled: "This feature is disabled in the current build. Use the existing visible Companion panels only.",
+    backend_unavailable: "Needle runtime is unavailable or not initialized. Install the optional backend or switch back to the rule-based adapter.",
+    invalid_arguments: "The backend returned invalid arguments. Review the suggested panel and continue manually.",
+    low_confidence: "Confidence is below the current threshold. Review the target panel and confirm manually if needed.",
+    out_of_scope: "Use one of the fixed Companion commands shown below, or continue through the normal UI."
+  }[reason] || "";
+}
+
 function flashSection(sectionId) {
   const node = $(sectionId);
   if (!node) return;
@@ -351,7 +374,9 @@ function renderPendingIntent() {
   const kind = resolved.status === "reject" ? "bad" : "ok";
   const target = resolved.target_section ? `<div class="intent-target">target: ${esc(sectionTitle(resolved.target_section))}</div>` : "";
   const jump = resolved.target_section ? `<div class="intent-jump">Use JUMP TO PANEL to focus the current workflow section.</div>` : "";
-  panel.innerHTML = `<div><strong class="${kind}">${esc(resolved.action_label || resolved.intent || resolved.status || "intent")}</strong></div><div>${esc(resolved.summary || "")}</div>${target}<div>confidence: ${esc(confidence)} · confirm: ${resolved.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(resolved.arguments || {}))}</div><div>preconditions: ${preconditions}</div>${jump}`;
+  const fallback = resolved.fallback_reason ? `<div>${esc(fallbackCopy(resolved.fallback_reason))}</div>` : "";
+  const adapter = resolved.adapter ? `<div>adapter: ${esc(resolved.adapter)}</div>` : "";
+  panel.innerHTML = `<div><strong class="${kind}">${esc(resolved.action_label || resolved.intent || resolved.status || "intent")}</strong></div><div>${esc(resolved.summary || "")}</div>${fallback}${target}<div>confidence: ${esc(confidence)} · confirm: ${resolved.requires_confirmation ? "yes" : "no"}</div><div>arguments: ${esc(JSON.stringify(resolved.arguments || {}))}</div><div>preconditions: ${preconditions}</div>${adapter}${jump}`;
   confirmBtn.disabled = !pending;
   cancelBtn.disabled = !pending && !lastIntentResult;
 }
@@ -507,6 +532,8 @@ async function refresh() {
     $("usbState").textContent = latest.usb_ports.length ? `${latest.usb_ports.length} FOUND` : "NOT FOUND";
     $("idfState").textContent = latest.idf_ready ? "READY" : "MISSING";
     $("fwState").textContent = latest.firmware.ready ? fmt(latest.firmware.size) : "NOT BUILT";
+    const adapter = latest.intent_adapter || {};
+    $("intentAdapterState").textContent = adapter.mode ? `${adapter.name || "unknown"} / ${adapter.mode}` : (adapter.name || "UNKNOWN");
 
     const p = $("portSelect");
     const oldPort = p.value;
@@ -615,6 +642,12 @@ function setupIntentButtons() {
       event.preventDefault();
       $("intentResolveBtn").click();
     }
+  });
+  document.querySelectorAll("[data-intent-example]").forEach(node => {
+    node.addEventListener("click", () => {
+      $("intentInput").value = node.getAttribute("data-intent-example") || "";
+      $("intentInput").focus();
+    });
   });
 }
 

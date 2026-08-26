@@ -8,6 +8,7 @@ import io
 import json
 import os
 import secrets
+import sys
 import datetime
 import shlex
 import subprocess
@@ -20,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import abvx_companion as core
+from needle_intent_adapter import build_intent_adapter
 
 PROJECT_ROOT = Path(os.environ.get("ABVX_PROJECT_ROOT", Path(__file__).resolve().parent.parent)).expanduser().resolve()
 UI_FILE = Path(__file__).resolve().parent / "companion_ui" / "index.html"
@@ -38,6 +40,7 @@ IMPORT_EXTENSIONS = {"book": {".txt", ".epub", ".fb2"}, "music": {".mp3"}}
 SYNC_KEYS = (TRACKS, NOTES, VOICE)
 IMPORT_LOCK = threading.Lock()
 SD_OVERRIDE = None
+INTENT_ADAPTER = build_intent_adapter(os.environ.get("ABVX_INTENT_ADAPTER", "rule_based"))
 
 
 def now_stamp():
@@ -85,6 +88,7 @@ class AppState:
         self.job_output = deque(maxlen=240)
         self.job_queue = deque(maxlen=10)
         self.sync = load_sync_state()
+        self.pending_intent = None
 
     def snapshot(self):
         with self.lock:
@@ -95,7 +99,16 @@ class AppState:
                 "output": "".join(self.job_output)[-MAX_JOB_OUTPUT:],
                 "queue": list(self.job_queue),
                 "sync": {k: v.copy() for k, v in self.sync.items()},
+                "pending_intent": dict(self.pending_intent) if isinstance(self.pending_intent, dict) else None,
             }
+
+    def set_pending_intent(self, pending):
+        with self.lock:
+            self.pending_intent = dict(pending) if isinstance(pending, dict) else None
+
+    def clear_pending_intent(self):
+        with self.lock:
+            self.pending_intent = None
 
     def set_sync(self, key, state, *, last_file="", last_error="", done=False):
         if key not in SYNC_KEYS:
@@ -208,6 +221,7 @@ def device_status():
               "usb_ports": usb_ports(), "idf_ready": IDF_EXPORT.is_file(),
               "firmware": {"ready": False, "path": "", "size": 0},
               "job": STATE.snapshot()}
+    result["intent_adapter"] = INTENT_ADAPTER.descriptor()
     result["backup"] = {
         "ready": BACKUP_ROOT.is_dir(),
         "path": str(BACKUP_ROOT),
@@ -224,11 +238,16 @@ def device_status():
         sd = core.resolve_sd(SD_OVERRIDE)
         usage = os.statvfs(sd)
         total, free = usage.f_blocks * usage.f_frsize, usage.f_bavail * usage.f_frsize
+        activities_count = len(core.visible_files(sd / "activities", ".json")) + \
+                          len(core.visible_files(sd / "activities", ".txt")) + \
+                          len(core.visible_files(sd / "activities", ".gpx"))
         result["sd"] = {"ready": True, "path": str(sd), "total": total,
                         "used": total - free, "free": free,
                         "music": len(core.visible_files(sd / "music", ".mp3")),
                         "books": len(core.visible_files(sd / "books", ".txt")),
-                        "notes": len(core.visible_files(sd / "notes", ".txt")), "error": ""}
+                        "notes": len(core.visible_files(sd / "notes", ".txt")),
+                        "activities": activities_count,
+                        "error": ""}
     except Exception as exc:
         result["sd"]["error"] = str(exc)
     job_running = result["job"]["state"] == "RUNNING"
@@ -236,6 +255,17 @@ def device_status():
     result["ready_flash"] = bool(result["usb_ports"]) and result["ready_build"] and not job_running
     result["ready_import"] = result["sd"]["ready"] and not job_running
     return result
+
+
+def pipeline_command(section):
+    sd = core.resolve_sd(SD_OVERRIDE)
+    script = PROJECT_ROOT / "tools" / "cardputer_local_pipeline.py"
+    return [sys.executable, str(script), f"sync-{section}", "--deploy", "--sd", str(sd)]
+
+
+def time_sync_command(url="http://192.168.4.1"):
+    script = PROJECT_ROOT / "tools" / "abvx_companion.py"
+    return [sys.executable, str(script), "sync-time", "--url", url]
 
 
 def idf_command(action, port=None):
@@ -285,22 +315,43 @@ class Handler(BaseHTTPRequestHandler):
             self._error(403, "invalid host")
             return
         path = urllib.parse.urlsplit(self.path).path
-        if path == "/":
-            body = UI_FILE.read_text(encoding="utf-8").replace("__ABVX_TOKEN__", STATE.token).encode()
-            self.send_response(200)
-            self._headers("text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        elif path == "/api/status":
-            self._json(200, {"ok": True, **device_status()})
-        elif path == "/api/job":
-            self._json(200, {"ok": True, **STATE.snapshot()})
-        elif path == "/favicon.ico":
-            self.send_response(204)
-            self.end_headers()
-        else:
-            self._error(404, "not found")
+        try:
+            if path == "/":
+                body = UI_FILE.read_text(encoding="utf-8").replace("__ABVX_TOKEN__", STATE.token).encode()
+                self.send_response(200)
+                self._headers("text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif path == "/api/status":
+                self._json(200, {"ok": True, **device_status()})
+            elif path == "/api/job":
+                self._json(200, {"ok": True, **STATE.snapshot()})
+            elif path == "/api/activities":
+                sd = core.resolve_sd(SD_OVERRIDE)
+                items = core.list_activities(sd)
+                self._json(200, {"ok": True, "count": len(items), "items": items})
+            elif path == "/api/activity":
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                activity_id = query.get("id", [""])[0]
+                if not activity_id:
+                    self._error(400, "missing id")
+                    return
+                sd = core.resolve_sd(SD_OVERRIDE)
+                path_entry = core.read_activity_file(sd, activity_id)
+                payload = path_entry.read_text(encoding="utf-8", errors="replace")
+                self._json(200, {"ok": True,
+                                "id": activity_id,
+                                "name": path_entry.name,
+                                "size": path_entry.stat().st_size,
+                                "content": payload})
+            elif path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+            else:
+                self._error(404, "not found")
+        except Exception as exc:
+            self._error(400, str(exc))
 
     def do_POST(self):
         if not self._host_ok() or not secrets.compare_digest(self.headers.get("X-ABVX-Token", ""), STATE.token):
@@ -308,7 +359,39 @@ class Handler(BaseHTTPRequestHandler):
             return
         route = urllib.parse.urlsplit(self.path)
         try:
-            if route.path == "/api/import":
+            if route.path == "/api/intent/resolve":
+                status = device_status()
+                payload = validate_payload_json(self._read_json())
+                resolved = INTENT_ADAPTER.resolve(payload, status)
+                execution = None
+                if resolved["status"] == "ok" and not resolved["requires_confirmation"]:
+                    execution = self._execute_confirmed_intent(resolved["intent"], resolved["arguments"])
+                    STATE.clear_pending_intent()
+                elif resolved["status"] == "ok":
+                    STATE.set_pending_intent(resolved)
+                else:
+                    STATE.clear_pending_intent()
+                self._json(200, {
+                    "ok": True,
+                    "adapter": INTENT_ADAPTER.name,
+                    "resolved": resolved,
+                    "execution": execution,
+                    "pending_intent": STATE.snapshot()["pending_intent"],
+                })
+            elif route.path == "/api/intent/cancel":
+                STATE.clear_pending_intent()
+                self._json(200, {"ok": True, "message": "Pending intent cleared"})
+            elif route.path == "/api/intent/confirm":
+                payload = validate_payload_json(self._read_json())
+                pending = STATE.snapshot().get("pending_intent")
+                if not pending:
+                    raise RuntimeError("no pending intent")
+                if payload.get("confirm") is not True:
+                    raise RuntimeError("intent confirmation required")
+                result = self._execute_confirmed_intent(pending["intent"], pending["arguments"])
+                STATE.clear_pending_intent()
+                self._json(200, {"ok": True, "result": result})
+            elif route.path == "/api/import":
                 self._import_file(urllib.parse.parse_qs(route.query))
             elif route.path == "/api/sync-notes":
                 payload = validate_payload_json(self._read_json())
@@ -349,6 +432,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._error(404, "not found")
         except Exception as exc:
             self._error(400, exc)
+
+    def _execute_confirmed_intent(self, intent, arguments):
+        arguments = core.validate_intent_arguments(intent, arguments)
+        if intent == "sd_status":
+            return {"message": "status loaded", "status": device_status()}
+        if intent == "sync_time":
+            STATE.start("TIME SYNC", time_sync_command())
+            return {"message": "Time sync started"}
+        if intent == "sync_music":
+            STATE.start("SYNC MUSIC", pipeline_command("music"))
+            return {"message": "Music sync started"}
+        if intent == "sync_books":
+            STATE.start("SYNC BOOKS", pipeline_command("books"))
+            return {"message": "Books sync started"}
+        if intent == "sync_voice":
+            self._sync_voice(delete_after=arguments["delete_after"])
+            return {"message": "Voice sync complete"}
+        if intent == "prepare_browser_package":
+            raise RuntimeError("browser package preparation is not implemented")
+        raise RuntimeError(f"unsupported confirmed intent: {intent}")
 
     def _import_file(self, query):
         kind = query.get("kind", [""])[0]

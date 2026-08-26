@@ -1,6 +1,10 @@
 # ABVx Adventure / GPS / LoRa Architecture
 
-Status: future architecture note. No firmware implementation yet.
+Status: GNSS Lab and Journey CSV firmware slices are implemented; hardware verification is pending. Running Mode, Voice Marks, GPX export, and LoRa remain separate later phases.
+
+Journey tracking is a background session: it may continue while Music is open or playing. GNSS polling remains active and CSV points are bounded to one write every 30 seconds. CSV writes pause on Reader and Recorder screens, which retain their existing SD-safety constraints.
+
+The Journey screen requires explicit `OK STOP`; `GO/BACK` shows `STOP FIRST`. `M` opens Music without ending the Journey. The first Running Mode presents distance, estimated pace from recorded points, and elapsed session time; it is deliberately a local-only MVP, not a precision sports watch claim.
 
 ## Hardware target
 

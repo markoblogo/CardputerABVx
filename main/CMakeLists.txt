@@ -1,6 +1,8 @@
 idf_component_register(
     SRCS
         "main.cpp"
+        "gnss_service.cpp"
+        "journey_service.cpp"
         "persistence.cpp"
         "lib/adafruit_tca8418/Adafruit_TCA8418.cpp"
     INCLUDE_DIRS
@@ -11,6 +13,7 @@ idf_component_register(
         M5Unified
         minimp3
         esp_driver_spi
+        esp_driver_uart
         esp_app_format
         esp_driver_gpio
         esp_event

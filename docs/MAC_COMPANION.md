@@ -201,6 +201,7 @@ Rules:
 - `context` is optional and contains only bounded Companion state flags.
 - No raw filesystem paths are accepted from the model-facing request.
 - The resolver may accept bounded mixed-language shortcuts, including simple Russian, English, and translit variants, but only when they map onto the same fixed intent enum.
+- The adapter backend is replaceable. Current default is `rule_based`; a future `needle_stub`/`needle` backend must preserve the same request and response contract.
 
 ### Resolve response
 
@@ -227,6 +228,9 @@ Response fields:
 - `summary`: short human-readable explanation for the UI.
 - `requires_confirmation`: true for any mutating operation.
 - `fallback_reason`: bounded string or `null`.
+- `adapter`: backend name that produced the result.
+- `adapter_meta`: optional backend descriptor for UI/debug visibility.
+- Companion UI may surface the active adapter backend so the user can tell whether routing is `rule_based`, `needle_stub`, or a future real backend.
 
 ### Fallback and reject shapes
 
@@ -351,6 +355,69 @@ Out of scope request:
 - Execution continues only after explicit user confirmation for mutating intents.
 - Confirmed execution must call the same fixed handlers already used by the current UI.
 - The resolver may not fabricate unavailable state; it can only use supplied `context` and existing Companion detection.
+- Swapping adapters may change how the intent is inferred, but not what intents exist, how arguments are validated, or how execution is confirmed.
+
+### Stub backend contract
+
+`needle_stub` is allowed to expose a more runtime-like envelope while still delegating actual inference to bounded local rules.
+
+- `adapter_request` may describe model-facing input such as text, bounded context, and allowed intents.
+- `adapter_response` may describe model-like output such as chosen intent, arguments, confidence, and status.
+- These fields are diagnostic and compatibility-oriented only; they do not create a second execution path.
+- A future real backend should preserve these outer shapes so the UI and confirm flow do not need redesign.
+
+### Real Needle backend contract
+
+The real backend uses the official Needle Python package and the one-turn `complete()` API.
+
+- Install path: `pip install cactus-needle`
+- Runtime selector: `ABVX_INTENT_ADAPTER=needle`
+- Optional confidence gate: `ABVX_INTENT_CONFIDENCE=0.75`
+- Optional custom weights: `ABVX_INTENT_NEEDLE_WEIGHTS=/path/to/model.cact`
+- Optional persisted tool index: `ABVX_INTENT_NEEDLE_TOOL_INDEX=~/Library/Application Support/ABVx Companion/needle-tools.idx`
+
+Backend rules:
+
+- Companion passes raw JSON-schema tools, not Python side-effecting functions.
+- Needle is used only for intent selection and argument filling; Companion still owns execution.
+- Empty calls become `out_of_scope`.
+- Confidence below the configured threshold becomes `low_confidence`.
+- Runtime/import/init failures become `backend_unavailable` and must degrade safely in the UI.
+- System facts must be passed as a single Needle `system` string and refreshed when host-side SD or backup state changes.
+
+### Host-side runtime wiring
+
+Current practical runtime path:
+
+- Run Companion itself under a Python interpreter that has `cactus-needle` installed.
+- For Terminal launch, use that interpreter directly.
+- For `ABVx Companion.app`, the launcher now prefers:
+  - `ABVX_COMPANION_PYTHON` when explicitly set,
+  - `~/Library/Application Support/ABVx Companion/.venv/bin/python3`,
+  - then the normal host `python3`.
+
+This keeps the Companion surface unchanged while allowing a dedicated host-side Needle runtime.
+
+### Reproducible macOS setup and custom-weights verify
+
+Install the optional runtime into the exact location the `.app` launcher already prefers:
+
+```sh
+zsh tools/setup_abvx_companion_needle.zsh
+```
+
+The script creates or reuses `~/Library/Application Support/ABVx Companion/.venv`, installs `cactus-needle`, and verifies that `import needle` succeeds. It does not enable the `needle` adapter globally.
+
+When a real `.cact` model file is available, run the live Companion check with an explicit path:
+
+```sh
+ABVX_INTENT_ADAPTER=needle \
+ABVX_INTENT_NEEDLE_WEIGHTS=/absolute/path/to/model.cact \
+"$HOME/Library/Application Support/ABVx Companion/.venv/bin/python" \
+tools/abvx_companion_app.py --no-open
+```
+
+Acceptance for that separate check: `/api/status` reports `intent_adapter.name = needle` and the selected weights path; `POST /api/intent/resolve` completes one supported read-only intent through `adapter_mode = runtime`; no mutating action is executed without the existing confirmation flow.
 
 ### Confirmation card contract
 

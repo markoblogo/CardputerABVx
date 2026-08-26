@@ -46,6 +46,22 @@ Use this checklist after flashing a release checkpoint.
 4. Reboot and reopen `INBOX`; events remain visible.
 5. `1` refreshes the internal journal without changing SD availability.
 
+## GNSS / Journey
+
+1. Outdoors, open `JOURNEY`; GNSS Lab moves from `SEARCHING` or `NO FIX` to `FIX` and shows coordinates, speed, altitude, and satellites.
+2. Press OK to start; confirm `/sdcard/journeys/J0001/TRACK.CSV` is created with the CSV header and a first valid point.
+3. Leave the device on the Journey or Running screen for at least 30 seconds; confirm a later row is appended, not more than once per 30 seconds.
+4. While Journey is active, GO/BACK keeps the session screen open and shows `STOP FIRST`.
+5. Press `M`, start Music, let it play through a Journey logging interval, then reopen Journey; confirm the session remains active and point count increases.
+6. Open Reader or Recorder while the session is active; confirm no Journey row is written until returning to an allowed Journey, Launcher, Dashboard, or Music screen.
+7. Return to Journey and press OK STOP; confirm the track file closes and no further rows are appended.
+
+## Running Mode
+
+1. Start a Journey and press Right (`/`) to open `RUNNING`.
+2. Confirm large distance, pace, and elapsed-time fields refresh while the session is active.
+3. Press `M` to open Music without ending the Journey; GO/BACK from Running returns to Journey; OK STOP ends the session.
+
 ## Utilities
 
 1. `TIME` stopwatch, timer preset, and alarm work.

@@ -206,6 +206,15 @@ Or open `tools/ABVx Companion.app` in Finder to launch it without Terminal.
 
 It opens `http://127.0.0.1:8765` and provides automatic SD/USB status, drag-and-drop Books and Music import, Time Sync, firmware Build, and guarded Flash. It binds only to localhost, uses a per-launch request token, and accepts only fixed operations. The current version uses the locally installed ESP-IDF 5.4.2 toolchain.
 
+Optional Needle runtime for Companion intent routing:
+
+```sh
+zsh tools/setup_abvx_companion_needle.zsh
+ABVX_INTENT_ADAPTER=needle "$HOME/Library/Application Support/ABVx Companion/.venv/bin/python" ./tools/abvx_companion_app.py
+```
+
+If you launch `tools/ABVx Companion.app`, it now prefers `ABVX_COMPANION_PYTHON` or `~/Library/Application Support/ABVx Companion/.venv/bin/python3` when present, so the UI can use the same host-side Needle runtime without changing the Companion surface.
+
 ## System Map
 
 ```mermaid

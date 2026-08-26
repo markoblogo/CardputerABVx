@@ -200,9 +200,15 @@ That means:
 - No open-ended local chat in Companion.
 - No donor runtime adoption that bypasses the existing Companion core and fixed operations.
 
-## Parked hardware-dependent work
+## Phase 8: Journey tracker
 
-GPS/LoRa work is excluded from the active roadmap until the hardware module is physically available. The existing architecture note is retained only as future reference.
+Hardware is available. The active sequence is GNSS Lab -> Journey Track -> Running Mode -> Voice Marks -> Mac GPX export. GNSS Lab reads checksum-valid NMEA over the Cap LoRa-1262 UART. An explicitly started Journey creates `/sdcard/journeys/J0001/TRACK.CSV`, writes the first valid point immediately, and then writes at most one point every 30 seconds.
+
+Journey is allowed to run alongside Music. Its bounded tracking write is paused on Reader and Recorder screens rather than competing with their SD-sensitive operations.
+
+Running Mode MVP is now layered over Journey with large distance, pace, and elapsed-time values. Pace is based on the 30-second Journey sample interval and should be hardware-evaluated before it is treated as a training metric.
+
+LoRa remains a later direct computer/home-station relay after local Journey tracking is proven. It is not a mesh or Meshtastic feature.
 
 Architecture: `docs/ADVENTURE_LORA_ARCHITECTURE.md`
 
