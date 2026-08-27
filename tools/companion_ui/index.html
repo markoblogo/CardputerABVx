@@ -560,9 +560,8 @@ async function refresh() {
     const adapter = latest.intent_adapter || {};
     $("intentAdapterState").textContent = adapter.mode ? `${adapter.name || "unknown"} / ${adapter.mode}` : (adapter.name || "UNKNOWN");
     const localModel = latest.local_model || {};
-    $("localModelResult").innerHTML = localModel.ok
-      ? `<strong class="ok">READY</strong><div>${esc(localModel.model || "local worker")} · ${esc(localModel.device || "device unknown")}</div><div class="intent-jump">explicit context only · no live proof</div>`
-      : `<strong class="bad">OFFLINE</strong><div>Start the Mac-local worker on port 8766.</div>`;
+    const localState = localModel.ok ? "READY" : (localModel.load_error ? "OFFLINE" : "WARMING UP");
+    $("localModelResult").innerHTML = `<strong class="${localState === "OFFLINE" ? "bad" : "ok"}">${localState}</strong><div>${esc(localModel.model || "local worker")} · ${esc(localModel.device || "device unknown")}</div><div class="intent-jump">explicit context only · no live proof</div>`;
 
     const p = $("portSelect");
     const oldPort = p.value;
