@@ -63,7 +63,15 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
 .intent-jump{font-size:9px;color:var(--muted)}
 .section-flash{animation:sectionFlash 1.2s ease-out 1}
 @keyframes sectionFlash{0%{box-shadow:0 0 0 0 #b8ff4690;border-color:var(--acid)}100%{box-shadow:0 0 0 18px transparent;border-color:var(--line)}}
+.operations-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.8fr);gap:18px;margin-top:18px}
+.operations-side{display:grid;gap:18px}
+.activity-primary{grid-column:auto;min-height:438px;display:grid;grid-template-rows:auto auto 1fr}
+.activity-primary .terminal{height:auto;min-height:330px;font-size:11px;line-height:1.65}
+.operations-side .card{min-height:210px}
+.section-kicker{margin:26px 0 -7px;color:var(--muted);font-size:10px;letter-spacing:.16em;text-transform:uppercase}
 @media(max-width:900px){.shell{grid-template-columns:1fr}.rail{height:auto;position:relative;border-right:0;border-bottom:1px solid var(--line);padding:18px 22px}.nav{display:none}.rail-state{position:absolute;right:18px;top:12px;margin:0}.main{padding:24px 16px}.hero-grid,.grid{grid-template-columns:1fr}.top h1{font-size:27px}.clock{display:none}.log{grid-column:auto}}
+@media(max-width:900px){.operations-grid{grid-template-columns:1fr}.activity-primary{min-height:360px}.activity-primary .terminal{min-height:260px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
@@ -71,7 +79,7 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
   <aside class="rail">
     <div class="brand">ABV<span>x</span></div>
     <div class="version">MAC COMPANION / 0.1</div>
-    <nav class="nav"><a class="active" href="#device">01 DEVICE</a><a href="#content">02 CONTENT</a><a href="#firmware">03 FIRMWARE</a><a href="#activity">04 ACTIVITY</a></nav>
+    <nav class="nav"><a class="active" href="#device">01 DEVICE</a><a href="#activity">02 ACTIVITY</a><a href="#content">03 CONTENT</a><a href="#firmware">04 FIRMWARE</a></nav>
     <div class="rail-state"><div><i id="railLed" class="led"></i><span id="railLabel">SCANNING</span></div><div id="railPath" class="tiny">Looking for ABVx SD...</div></div>
   </aside>
 
@@ -94,6 +102,39 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
           <div class="device-line"><span>INTENT ADAPTER</span><b id="intentAdapterState">SCANNING</b></div>
           <div class="actions"><button id="refreshBtn" class="btn">REFRESH</button><button id="timeBtn" class="btn primary">SYNC TIME</button></div>
         </div>
+      </div>
+    </section>
+
+    <div class="section-kicker">Live operations</div>
+    <section id="activity" class="operations-grid">
+      <article class="card log activity-primary">
+        <h2><span class="terminal-title"><span>Activity</span><span id="activityState" class="queue-state">monitoring</span></span></h2>
+        <p>Durable results and current build, flash, import, and sync output.</p>
+        <div id="terminal" class="terminal">Companion ready.</div>
+      </article>
+      <div class="operations-side">
+        <article class="card">
+          <span class="tag">QUEUE</span>
+          <h2>Operation queue</h2>
+          <p>Recent jobs and current runtime state.</p>
+          <div id="queueList" class="queue-list">No jobs yet</div>
+          <div id="queueState" class="queue-state">state: IDLE</div>
+        </article>
+        <article class="card">
+          <span class="tag">BACKUP</span>
+          <h2>Export status</h2>
+          <p>Track, notes, and voice sync health with last operation markers.</p>
+          <div class="sync-heartbeat"><span>SYNC HEARTBEAT <span id="syncHeartbeatState" class="state">--</span></span><span class="dot" id="syncHeartbeatDot"></span></div>
+          <div id="syncPanel" class="sync-list">Loading sync state…</div>
+          <div class="actions" style="margin-top:12px">
+            <button id="syncNotesBtn" class="btn">SYNC NOTES</button>
+            <button id="syncVoiceBtn" class="btn">SYNC VOICE</button>
+          </div>
+          <div class="device-line" style="margin-top:10px; gap:10px;display:flex;align-items:center;flex-wrap:wrap;">
+            <label><input type="checkbox" id="deleteNotesAfter"/> Delete notes from card after sync</label>
+            <label><input type="checkbox" id="deleteVoiceAfter"/> Delete voice from card after sync</label>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -160,32 +201,10 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
         </div>
       </article>
       <article class="card">
-        <span class="tag">BACKUP</span>
-        <h2>Export status</h2>
-        <p>Track, notes, and voice sync health with last operation markers.</p>
-        <div class="sync-heartbeat"><span>SYNC HEARTBEAT <span id="syncHeartbeatState" class="state">--</span></span><span class="dot" id="syncHeartbeatDot"></span></div>
-        <div id="syncPanel" class="sync-list">Loading sync state…</div>
-        <div class="actions" style="margin-top:12px">
-          <button id="syncNotesBtn" class="btn">SYNC NOTES</button>
-          <button id="syncVoiceBtn" class="btn">SYNC VOICE</button>
-        </div>
-        <div class="device-line" style="margin-top:10px; gap:10px;display:flex;align-items:center;flex-wrap:wrap;">
-          <label><input type="checkbox" id="deleteNotesAfter"/> Delete notes from card after sync</label>
-          <label><input type="checkbox" id="deleteVoiceAfter"/> Delete voice from card after sync</label>
-        </div>
-      </article>
-      <article class="card">
         <span class="tag">ERRORS</span>
         <h2>Error templates</h2>
         <p>Common failures and suggested fixes.</p>
         <div id="errorTemplateList" class="error-templates">Loading templates…</div>
-      </article>
-      <article class="card">
-        <span class="tag">QUEUE</span>
-        <h2>Operation queue</h2>
-        <p>Recent jobs and current runtime state.</p>
-        <div id="queueList" class="queue-list">No jobs yet</div>
-        <div id="queueState" class="queue-state">state: IDLE</div>
       </article>
     </section>
 
@@ -221,11 +240,6 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
           <div class="device-line"><span>AUTO FLASH</span><b>NEVER</b></div>
           <div class="actions"><button id="stopAppBtn" class="btn">STOP COMPANION</button></div>
         </div>
-      </article>
-      <article id="activity" class="card log">
-        <h2><span class="terminal-title"><span>Activity</span><span id="activityState" class="queue-state">monitoring</span></span></h2>
-        <p>Concise results and current build/flash output.</p>
-        <div id="terminal" class="terminal">Companion ready.</div>
       </article>
     </section>
   </main>
