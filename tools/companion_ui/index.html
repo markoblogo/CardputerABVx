@@ -99,6 +99,17 @@ dialog{border:1px solid #70423e;background:#101411;color:var(--text);padding:0;b
 
     <section id="guide" class="grid">
       <article class="card">
+        <span class="tag">LOCAL AI</span>
+        <h2>Mac AI cockpit</h2>
+        <p>Ask the local MPS worker about explicitly supplied context. This is read-only and never controls the device.</p>
+        <div class="intent-shell">
+          <input id="localModelQuestion" class="intent-input" type="text" placeholder="What must remain explicit before an agent acts?">
+          <textarea id="localModelContext" class="intent-input" rows="4" placeholder="Paste selected context only"></textarea>
+          <div class="intent-actions"><button id="localModelAskBtn" class="btn primary">ASK LOCAL MODEL</button></div>
+          <div id="localModelResult" class="intent-result">Worker status: checking…</div>
+        </div>
+      </article>
+      <article class="card">
         <span class="tag">ONBOARDING</span>
         <h2>Quick start</h2>
         <p>Use this flow for reliable first import.</p>
@@ -410,6 +421,20 @@ async function resolveIntent() {
   await refresh();
 }
 
+async function askLocalModel() {
+  const question = $("localModelQuestion").value.trim();
+  const text = $("localModelContext").value.trim();
+  if (!question || !text) { toast("Add a question and explicit context first", true); return; }
+  const data = await api("/api/local-model/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ request_id: `cardputer-ui-${Date.now()}`, question, context: [{ id: "companion-selection", text }] })
+  });
+  const result = data.result || {};
+  $("localModelResult").innerHTML = `<strong class="${result.status === "ANSWERED" ? "ok" : "bad"}">${esc(result.status || "UNKNOWN")}</strong><div>${esc(result.answer || result.reason || "No answer")}</div><div class="intent-jump">${esc(result.device || "worker unavailable")} · explicit context · no live proof</div>`;
+  log(`LOCAL MODEL ${result.status || "UNKNOWN"}`);
+}
+
 async function confirmIntent() {
   const data = await api("/api/intent/confirm", {
     method: "POST",
@@ -534,6 +559,10 @@ async function refresh() {
     $("fwState").textContent = latest.firmware.ready ? fmt(latest.firmware.size) : "NOT BUILT";
     const adapter = latest.intent_adapter || {};
     $("intentAdapterState").textContent = adapter.mode ? `${adapter.name || "unknown"} / ${adapter.mode}` : (adapter.name || "UNKNOWN");
+    const localModel = latest.local_model || {};
+    $("localModelResult").innerHTML = localModel.ok
+      ? `<strong class="ok">READY</strong><div>${esc(localModel.model || "local worker")} · ${esc(localModel.device || "device unknown")}</div><div class="intent-jump">explicit context only · no live proof</div>`
+      : `<strong class="bad">OFFLINE</strong><div>Start the Mac-local worker on port 8766.</div>`;
 
     const p = $("portSelect");
     const oldPort = p.value;
@@ -650,6 +679,11 @@ function setupIntentButtons() {
     });
   });
 }
+
+$("localModelAskBtn").onclick = async () => {
+  try { await askLocalModel(); }
+  catch (error) { toast(error.message, true); }
+};
 
 function setupDrop(kind) {
   const area = $(kind + "Drop");

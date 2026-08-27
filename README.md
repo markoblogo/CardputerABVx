@@ -215,6 +215,26 @@ ABVX_INTENT_ADAPTER=needle "$HOME/Library/Application Support/ABVx Companion/.ve
 
 If you launch `tools/ABVx Companion.app`, it now prefers `ABVX_COMPANION_PYTHON` or `~/Library/Application Support/ABVx Companion/.venv/bin/python3` when present, so the UI can use the same host-side Needle runtime without changing the Companion surface.
 
+### Optional Mac-local model cockpit
+
+The Mac can also query the shared MPS worker without changing Cardputer
+firmware or granting it device-control authority:
+
+```sh
+python3 tools/cardputer_local_model.py health
+python3 tools/cardputer_local_model.py answer --file tools/cardputer_local_model_fixture.json
+```
+
+The request must carry explicit context. The response is a bounded local
+receipt; model output is not treated as a device command, live/public proof, or
+approval. Start the worker from the local-models checkout with
+`python3 local_model_worker.py`.
+
+The same read-only path is available in the Companion UI as **Mac AI
+cockpit**. It displays worker health, accepts one question plus explicitly
+selected context, and shows the returned receipt. It cannot invoke firmware,
+SD sync, flash, publication, or approval actions.
+
 ## System Map
 
 ```mermaid

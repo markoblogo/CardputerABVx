@@ -1,0 +1,10 @@
+{
+  "request_id": "cardputer-local-smoke-001",
+  "question": "What is the Mac-side source of truth?",
+  "context": [
+    {
+      "id": "cardputer-readme",
+      "text": "Mac is the source of truth; the SD card is the prepared runtime copy for Cardputer."
+    }
+  ]
+}

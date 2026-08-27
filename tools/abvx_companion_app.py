@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import urllib.parse
+import urllib.request
 import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +42,7 @@ SYNC_KEYS = (TRACKS, NOTES, VOICE)
 IMPORT_LOCK = threading.Lock()
 SD_OVERRIDE = None
 INTENT_ADAPTER = build_intent_adapter(os.environ.get("ABVX_INTENT_ADAPTER", "rule_based"))
+LOCAL_MODEL_URL = os.environ.get("CARDPUTER_LOCAL_MODEL_URL", "http://127.0.0.1:8766").rstrip("/")
 
 
 def now_stamp():
@@ -216,12 +218,49 @@ def validate_payload_json(payload):
     return payload
 
 
+def local_model_health():
+    try:
+        with urllib.request.urlopen(f"{LOCAL_MODEL_URL}/health", timeout=0.5) as response:
+            payload = json.loads(response.read().decode())
+        return payload if isinstance(payload, dict) else {"ok": False, "error": "invalid health response"}
+    except Exception as exc:
+        return {"ok": False, "model": "occ-ai/OCC-RAG-0.6B", "device": "unavailable", "error": str(exc)}
+
+
+def local_model_answer(payload):
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid local model payload")
+    question = payload.get("question")
+    context = payload.get("context", [])
+    if not isinstance(question, str) or not question.strip():
+        raise RuntimeError("question is required")
+    if not isinstance(context, list) or len(context) > 12:
+        raise RuntimeError("context must contain 0-12 explicit items")
+    body = json.dumps({**payload, "project": "cardputer"}).encode()
+    try:
+        request = urllib.request.Request(
+            f"{LOCAL_MODEL_URL}/v1/answer", data=body,
+            headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(request, timeout=45) as response:
+            result = json.loads(response.read().decode())
+    except Exception as exc:
+        raise RuntimeError(f"local model unavailable: {exc}") from exc
+    if not isinstance(result, dict) or not result.get("ok"):
+        raise RuntimeError("local model rejected request")
+    evidence = result.get("evidence", {})
+    if evidence.get("context_mode") != "explicit_only" or evidence.get("live_proof") is not False:
+        raise RuntimeError("local model receipt violated explicit-context/read-only contract")
+    return result
+
+
 def device_status():
     result = {"sd": {"ready": False, "path": "", "error": "not detected"},
               "usb_ports": usb_ports(), "idf_ready": IDF_EXPORT.is_file(),
               "firmware": {"ready": False, "path": "", "size": 0},
               "job": STATE.snapshot()}
     result["intent_adapter"] = INTENT_ADAPTER.descriptor()
+    result["local_model"] = local_model_health()
     result["backup"] = {
         "ready": BACKUP_ROOT.is_dir(),
         "path": str(BACKUP_ROOT),
@@ -381,6 +420,8 @@ class Handler(BaseHTTPRequestHandler):
             elif route.path == "/api/intent/cancel":
                 STATE.clear_pending_intent()
                 self._json(200, {"ok": True, "message": "Pending intent cleared"})
+            elif route.path == "/api/local-model/answer":
+                self._json(200, {"ok": True, "result": local_model_answer(validate_payload_json(self._read_json()))})
             elif route.path == "/api/intent/confirm":
                 payload = validate_payload_json(self._read_json())
                 pending = STATE.snapshot().get("pending_intent")
