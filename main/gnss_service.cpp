@@ -101,6 +101,8 @@ bool GnssService::begin(const char** error)
         if (error) *error = "UART configuration failed";
         return false;
     }
+    static constexpr char VERSION_QUERY[] = "$PCAS06,0*1B\r\n";
+    uart_write_bytes(GNSS_UART, VERSION_QUERY, sizeof(VERSION_QUERY) - 1);
     ready_ = true;
     return true;
 }
@@ -114,11 +116,13 @@ void GnssService::poll(uint32_t now_ms)
         error_ = true;
         return;
     }
+    fix_.byte_count += static_cast<uint32_t>(received);
     for (int index = 0; index < received; ++index) {
         const char value = buffer[index];
         if (value == '\r' || value == '\n') {
             if (line_len_) {
                 line_[line_len_] = '\0';
+                ++fix_.line_count;
                 parseSentence(line_, now_ms);
                 line_len_ = 0;
             }
@@ -132,7 +136,10 @@ void GnssService::poll(uint32_t now_ms)
 
 void GnssService::parseSentence(char* line, uint32_t now_ms)
 {
-    if (!hasValidChecksum(line)) return;
+    if (!hasValidChecksum(line)) {
+        ++fix_.checksum_error_count;
+        return;
+    }
     char* fields[16] = {};
     const int count = splitFields(line, fields, 16);
     if (!count) return;

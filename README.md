@@ -51,6 +51,12 @@ Stable baseline:
 - Transfer/Connections v3: Wi-Fi AP list/download plus staged, main-loop-owned upload.
 - Mac Companion Core: direct-SD status/layout, validated MP3 import, TXT-to-UTF-8 book import, and clock sync.
 
+Experimental hardware gate:
+
+- Journey and Running screens are flashed on Cardputer ADV. An active Journey can open Music with `M`; `J` returns to Journey without stopping playback, and automatic track changes preserve the Journey screen.
+- GNSS Lab exposes raw UART bytes/lines, checksum-valid NMEA sentences, checksum failures, and satellites. Current Cap hardware smoke remains blocked at `UART B0 L0`, so outdoor fix and Journey coordinates are not yet accepted.
+- Cardputer ADV exposes battery voltage but no reliable charge-state/current signal. The UI avoids treating USB voltage as a trustworthy 100%; confirm the updated percentage after disconnecting USB for 30-60 seconds.
+
 Next desktop layer: local Companion UI and packaged macOS app over the existing conversion core. Postponed: Companion Wi-Fi transport, browser, AI, and Bluetooth transfer.
 
 If a local AI layer is revisited later, it should begin as a narrow Mac Companion command router over fixed operations only. Current donor candidate: Needle-style tool routing for short commands such as sync, export, and status. It is not a license to add offline chat, a firmware-side assistant, or open-ended agent behavior.
@@ -287,6 +293,8 @@ idf.py -p /dev/cu.usbmodem101 flash
 5. Notes: create LAT note, edit it, delete it; Cyrillic note should be view-only.
 6. Time: stopwatch, timer, alarm sound.
 7. Files: browse SD, open TXT/MP3/WAV, open unsupported file info.
+8. Journey/Music: start Journey, open Music with `M`, return with `J`, and confirm playback plus automatic track changes stay in Journey.
+9. GNSS: inspect `UART B/L`, `NMEA`, `BAD`, and `SAT` before waiting for an outdoor fix; `UART B0` is a hardware/power/contact failure, not a satellite-reception result.
 8. Habits: toggle habit, next day, stats.
 9. Settings: SD reprobe, About, config/theme.
 10. Connections: AP starts, `/api/ping`, list, download, write-test.

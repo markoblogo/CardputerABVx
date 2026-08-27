@@ -206,6 +206,8 @@ Hardware is available. The active sequence is GNSS Lab -> Journey Track -> Runni
 
 Journey is allowed to run alongside Music. Its bounded tracking write is paused on Reader and Recorder screens rather than competing with their SD-sensitive operations.
 
+Hardware gate status: Journey/Music navigation is proven, including `J` return and automatic track changes without leaving Journey. GNSS remains blocked at zero raw UART bytes from the Cap; resolve physical power/contact and then complete the outdoor fix/CSV gate before expanding tracking metrics.
+
 Running Mode MVP is now layered over Journey with large distance, pace, and elapsed-time values. Pace is based on the 30-second Journey sample interval and should be hardware-evaluated before it is treated as a training metric.
 
 LoRa remains a later direct computer/home-station relay after local Journey tracking is proven. It is not a mesh or Meshtastic feature.

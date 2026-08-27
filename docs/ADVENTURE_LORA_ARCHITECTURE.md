@@ -1,10 +1,12 @@
 # ABVx Adventure / GPS / LoRa Architecture
 
-Status: GNSS Lab and Journey CSV firmware slices are implemented; hardware verification is pending. Running Mode, Voice Marks, GPX export, and LoRa remain separate later phases.
+Status: GNSS Lab, Journey CSV, and Running Mode firmware slices are implemented. Journey-to-Music navigation and background playback, including automatic track changes, are hardware-verified. GNSS hardware verification is blocked because the connected Cap currently reports `UART B0 L0`; outdoor fix and coordinate logging remain unaccepted. Voice Marks, GPX export, and LoRa remain separate later phases.
 
 Journey tracking is a background session: it may continue while Music is open or playing. GNSS polling remains active and CSV points are bounded to one write every 30 seconds. CSV writes pause on Reader and Recorder screens, which retain their existing SD-safety constraints.
 
-The Journey screen requires explicit `OK STOP`; `GO/BACK` shows `STOP FIRST`. `M` opens Music without ending the Journey. The first Running Mode presents distance, estimated pace from recorded points, and elapsed session time; it is deliberately a local-only MVP, not a precision sports watch claim.
+The Journey screen requires explicit `OK STOP`; `GO/BACK` shows `STOP FIRST`. `M` opens Music without ending the Journey, and `J` returns from Music without stopping playback. Automatic track changes preserve Journey/Running instead of forcing the Music screen. The first Running Mode presents distance, estimated pace from recorded points, and elapsed session time; it is deliberately a local-only MVP, not a precision sports watch claim.
+
+GNSS Lab exposes raw UART bytes and lines separately from checksum-valid NMEA. `UART B0` means no electrical UART traffic and must be resolved as a power/contact/module issue before evaluating sky visibility or time-to-first-fix.
 
 ## Hardware target
 

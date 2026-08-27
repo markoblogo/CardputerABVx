@@ -25,6 +25,8 @@ Use this checklist after flashing a release checkpoint.
 11. A malformed FAT name shows `Unsupported filename`; Music remains responsive and shuffle continues with the next playable track.
 12. In Music List, Up on the first track wraps to the last track and Down wraps back to the first.
 13. In Launcher, Up on the first app wraps to the last app and Down wraps back to the first.
+14. With Journey active, press `J` from Music List, Track Info, or Listening; Journey reopens without stopping playback.
+15. Let the current track finish while Journey is visible; the next track starts without switching the screen back to Music.
 7. `2` or `I` opens `TRACK INFO`.
 8. `2` or `P` inside Track Info runs the safe probe.
 
@@ -48,13 +50,14 @@ Use this checklist after flashing a release checkpoint.
 
 ## GNSS / Journey
 
-1. Outdoors, open `JOURNEY`; GNSS Lab moves from `SEARCHING` or `NO FIX` to `FIX` and shows coordinates, speed, altitude, and satellites.
-2. Press OK to start; confirm `/sdcard/journeys/J0001/TRACK.CSV` is created with the CSV header and a first valid point.
-3. Leave the device on the Journey or Running screen for at least 30 seconds; confirm a later row is appended, not more than once per 30 seconds.
-4. While Journey is active, GO/BACK keeps the session screen open and shows `STOP FIRST`.
-5. Press `M`, start Music, let it play through a Journey logging interval, then reopen Journey; confirm the session remains active and point count increases.
-6. Open Reader or Recorder while the session is active; confirm no Journey row is written until returning to an allowed Journey, Launcher, Dashboard, or Music screen.
-7. Return to Journey and press OK STOP; confirm the track file closes and no further rows are appended.
+1. Open `JOURNEY` and inspect `UART B/L`, `NMEA`, `BAD`, and `SAT`. If `UART B` remains zero after 30 seconds, stop: power off and reseat the Cap before any outdoor fix test.
+2. If UART bytes and checksum-valid NMEA counts increase, move outdoors; GNSS Lab should move from `NO FIX` to `FIX` and show coordinates, speed, altitude, and satellites.
+3. Press OK to start; confirm `/sdcard/journeys/J0001/TRACK.CSV` is created with the CSV header and a first valid point.
+4. Leave the device on the Journey or Running screen for at least 30 seconds; confirm a later row is appended, not more than once per 30 seconds.
+5. While Journey is active, GO/BACK keeps the session screen open and shows `STOP FIRST`.
+6. Press `M`, start Music, then press `J`; confirm playback continues, automatic track changes remain on Journey, and point count increases across a logging interval.
+7. Open Reader or Recorder while the session is active; confirm no Journey row is written until returning to an allowed Journey, Launcher, Dashboard, or Music screen.
+8. Return to Journey and press OK STOP; confirm the track file closes and no further rows are appended.
 
 ## Running Mode
 
@@ -69,6 +72,14 @@ Use this checklist after flashing a release checkpoint.
 3. `ROUTINES` toggles items, `1` advances day, stats/manage work.
 4. `SETTINGS` shows SD/BAT/Transfer password, About, and SD reprobe.
 5. `D` or `0` opens Dashboard; OK resumes, `1/2/3` shortcuts work.
+
+## Battery / Charging
+
+1. With USB disconnected for 30-60 seconds, record the displayed battery percentage.
+2. Connect USB with the top power switch `ON`; do not interpret an immediate voltage rise as a measured state of charge.
+3. Cardputer ADV cannot expose reliable charging status or battery current. Treat any `+`/animation as inferred only.
+4. After a charging interval, disconnect USB for 30-60 seconds and confirm the settled percentage increased.
+5. Repeat once without Music and Cap, then with each enabled separately, to identify a load that exceeds available charging headroom.
 
 ## Transfer
 

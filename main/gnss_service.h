@@ -13,6 +13,9 @@ struct GnssFix {
     int satellites = 0;
     uint32_t last_sentence_ms = 0;
     uint32_t sentence_count = 0;
+    uint32_t byte_count = 0;
+    uint32_t line_count = 0;
+    uint32_t checksum_error_count = 0;
 };
 
 enum class GnssStatus { Off, Searching, NoFix, Fix, Stale, Error };

@@ -309,6 +309,7 @@ bool display_dim = false;
 bool dirty = true;
 int battery_last_level = -1;
 int battery_last_mv = -1;
+bool battery_charge_likely = false;
 
 FIL mp3_fat_file = {};
 bool mp3_fat_open = false;
@@ -3348,10 +3349,14 @@ bool playNextAvailableTrack(int delta, std::string* err)
     }
     const int original = selected_track;
     const int original_shuffle_position = shuffle_position;
+    const Screen return_screen = screen;
     for (size_t attempt = 0; attempt < tracks.size(); ++attempt) {
         advanceTrackSelection(delta);
         std::string local_err;
-        if (startPlayback(&local_err)) return true;
+        if (startPlayback(&local_err)) {
+            if (return_screen == Screen::GnssLab || return_screen == Screen::Running) screen = return_screen;
+            return true;
+        }
         if (err && err->empty()) *err = tracks[selected_track] + ": " + local_err;
     }
     selected_track = original;
@@ -3991,6 +3996,18 @@ int batteryPercent()
         level = std::max(0, std::min(100, (battery_last_mv - 3300) * 100 / 800));
     }
     if (level < 0 || level > 100) return stable_level;
+    // Cardputer ADV exposes only battery voltage. While USB power is present,
+    // the charge voltage can make an incomplete battery look like 100%.
+    // Detect that jump, retain the last unplugged estimate, and mark it as a
+    // lower bound until the cable is removed and voltage settles again.
+    if (!battery_charge_likely && stable_level >= 0 && stable_level < 95 &&
+        level >= 99 && battery_last_mv >= 4100) {
+        battery_charge_likely = true;
+    }
+    if (battery_charge_likely) {
+        if (battery_last_mv < 4050 || level < 95) battery_charge_likely = false;
+        else return stable_level;
+    }
     // Cardputer ADV occasionally reports one false 0% while running from the
     // battery. Until there is a credible sample, show --% rather than a false
     // flat-battery warning; afterwards keep the last credible value.
@@ -4012,13 +4029,16 @@ int batteryPercent()
 void drawBatteryWidget(int x, int y)
 {
     int level = batteryPercent();
-    canvas.drawLine(x + 4, y, x, y + 7, uiFg());
-    canvas.drawLine(x, y + 7, x + 5, y + 7, uiFg());
-    canvas.drawLine(x + 5, y + 7, x + 2, y + 13, uiFg());
+    const bool show_charge_mark = !battery_charge_likely || ((M5.millis() / 500) % 2 == 0);
+    if (show_charge_mark) {
+        canvas.drawLine(x + 4, y, x, y + 7, uiFg());
+        canvas.drawLine(x, y + 7, x + 5, y + 7, uiFg());
+        canvas.drawLine(x + 5, y + 7, x + 2, y + 13, uiFg());
+    }
     canvas.setTextSize(2);
     canvas.setTextColor(uiFg(), uiBg());
     canvas.setCursor(x + 11, y);
-    if (level >= 0) canvas.printf("%d%%", level);
+    if (level >= 0) canvas.printf(battery_charge_likely ? "%d%%+" : "%d%%", level);
     else canvas.print("--%");
 }
 
@@ -4653,7 +4673,7 @@ void drawMusicPlaying()
     canvas.setTextSize(1);
     canvas.setTextColor(uiDim(), uiBg());
     canvas.setCursor(8, 122);
-    canvas.print("OK/GO STOP  UP/DN VOL  L/R TRACK");
+    canvas.print(journey.active() ? "J JOURNEY  OK/GO STOP  L/R TRACK" : "OK/GO STOP  UP/DN VOL  L/R TRACK");
     canvas.pushSprite(0, 0);
 }
 
@@ -5767,7 +5787,7 @@ void drawSettings()
     }
     canvas.setCursor(8, 112);
     int level = batteryPercent();
-    if (level >= 0) canvas.printf("BAT %d%% PASS %s", level, connection_ap_password);
+    if (level >= 0) canvas.printf("BAT %d%%%s PASS %s", level, battery_charge_likely ? "+" : "", connection_ap_password);
     else canvas.printf("BAT -- V%d PASS %s", battery_last_mv, connection_ap_password);
     canvas.setCursor(8, 122);
     if (settings_cast_editing) canvas.print("OK SAVE    BS DELETE    GO BACK");
@@ -7348,9 +7368,13 @@ void drawGnssLab()
         canvas.setCursor(8, 94);
         canvas.printf("SAT %d  NMEA %lu", fix.satellites, static_cast<unsigned long>(fix.sentence_count));
     } else {
-        canvas.print(fix.seen ? "NMEA received; waiting for fix" : "Waiting for NMEA UART data");
+        canvas.printf("UART B%lu L%lu", static_cast<unsigned long>(fix.byte_count),
+                      static_cast<unsigned long>(fix.line_count));
         canvas.setCursor(8, 74);
-        canvas.printf("NMEA %lu", static_cast<unsigned long>(fix.sentence_count));
+        canvas.printf("NMEA %lu BAD %lu", static_cast<unsigned long>(fix.sentence_count),
+                      static_cast<unsigned long>(fix.checksum_error_count));
+        canvas.setCursor(8, 86);
+        canvas.printf("SAT %d  %s", fix.satellites, fix.seen ? "WAITING FOR FIX" : "NO VALID DATA");
     }
     canvas.setTextColor(uiAccent(), uiBg());
     canvas.setCursor(8, 106);
@@ -7499,7 +7523,16 @@ void updateSpeedReader()
 
 void updatePower()
 {
-    uint32_t idle = M5.millis() - last_input_ms;
+    const uint32_t now = M5.millis();
+    const bool was_charging = battery_charge_likely;
+    batteryPercent();
+    static uint32_t last_charge_frame_ms = 0;
+    if (was_charging != battery_charge_likely ||
+        (battery_charge_likely && now - last_charge_frame_ms >= 500)) {
+        last_charge_frame_ms = now;
+        dirty = true;
+    }
+    uint32_t idle = now - last_input_ms;
     uint32_t play_dim = 10000;
     uint32_t play_off = 30000;
     uint32_t idle_off = 60000;
@@ -7769,7 +7802,12 @@ void handleKey(KeyEvent ev)
     }
 
     if (screen == Screen::MusicList) {
-        if (ev.key == Key::Up && !tracks.empty()) {
+        if (shortcutChar(ev) == 'j' && journey.active()) {
+            journey_notice.clear();
+            screen = Screen::GnssLab;
+            blockInput(250);
+        }
+        else if (ev.key == Key::Up && !tracks.empty()) {
             selected_track = (selected_track - 1 + static_cast<int>(tracks.size())) % static_cast<int>(tracks.size());
         }
         else if (ev.key == Key::Down && !tracks.empty()) {
@@ -7806,7 +7844,12 @@ void handleKey(KeyEvent ev)
     }
 
     if (screen == Screen::MusicInfo) {
-        if (ev.key == Key::Ok) {
+        if (shortcutChar(ev) == 'j' && journey.active()) {
+            journey_notice.clear();
+            screen = Screen::GnssLab;
+            blockInput(250);
+        }
+        else if (ev.key == Key::Ok) {
             if (!tracks.empty()) {
                 override_music_path.clear();
                 std::string err;
@@ -7830,7 +7873,12 @@ void handleKey(KeyEvent ev)
     }
 
     if (screen == Screen::MusicPlaying) {
-        if (ev.key == Key::Ok || ev.key == Key::Home || ev.key == Key::Back) {
+        if (shortcutChar(ev) == 'j' && journey.active()) {
+            journey_notice.clear();
+            screen = Screen::GnssLab;
+            blockInput(250);
+        }
+        else if (ev.key == Key::Ok || ev.key == Key::Home || ev.key == Key::Back) {
             stopPlayback();
             screen = Screen::MusicList;
             blockInput(300);
@@ -8633,6 +8681,7 @@ void handleKey(KeyEvent ev)
 extern "C" void app_main(void)
 {
     M5.begin();
+    M5.Power.setExtOutput(true);
     M5.Display.setRotation(1);
     M5.Display.setBrightness(0);
     M5.Speaker.begin();
