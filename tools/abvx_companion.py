@@ -2,6 +2,7 @@
 """ABVx Mac Companion Core for direct SD preparation and clock sync."""
 
 import argparse
+import hashlib
 import html.parser
 import os
 import posixpath
@@ -419,6 +420,14 @@ def add_music(sd, sources):
     print(f"OK MUSIC copied={copied}")
 
 
+def file_sha256(path, chunk_size=1024 * 1024):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.digest()
+
+
 def sync_music_mirror(source_dir, mirror_root):
     source_dir = Path(source_dir).expanduser().resolve()
     if not source_dir.is_dir():
@@ -430,14 +439,26 @@ def sync_music_mirror(source_dir, mirror_root):
     copied = 0
     files = sorted(path for path in source_dir.iterdir()
                    if path.is_file() and not path.name.startswith(".") and path.suffix.lower() == ".mp3")
+    unique_files = []
+    seen_hashes = {}
+    duplicates = 0
+    for path in files:
+        digest = file_sha256(path)
+        original = seen_hashes.get(digest)
+        if original is not None:
+            duplicates += 1
+            print(f"SKIP DUPLICATE {path.name}: same content as {original.name}")
+            continue
+        seen_hashes[digest] = path
+        unique_files.append(path)
     if not files:
-        print(f"OK MUSIC MIRROR copied=0 removed={removed}")
+        print(f"OK MUSIC MIRROR copied=0 removed={removed} duplicates={duplicates}")
         return
     index_path = mirror_music / "INDEX.TXT"
     index_path.unlink(missing_ok=True)
-    add_music(mirror_root, [str(path) for path in files])
+    add_music(mirror_root, [str(path) for path in unique_files])
     copied = len(visible_files(mirror_music, ".mp3"))
-    print(f"OK MUSIC MIRROR copied={copied} removed={removed}")
+    print(f"OK MUSIC MIRROR copied={copied} removed={removed} duplicates={duplicates}")
 
 
 def decode_book(raw):

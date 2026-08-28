@@ -32,6 +32,24 @@ def test_add_music_ascii_index_for_mp3_stem():
         assert index_lines[0] == "M001.MP3|Alyans Na Zare"
 
 
+def test_sync_music_mirror_skips_identical_content_under_different_names():
+    with tempfile.TemporaryDirectory() as root:
+        root = Path(root)
+        source = root / "source"
+        mirror = root / "mirror"
+        source.mkdir()
+        _mp3_with_sync(source / "First.mp3")
+        (source / "Second.mp3").write_bytes((source / "First.mp3").read_bytes())
+
+        MODULE.sync_music_mirror(source, mirror)
+
+        prepared = list((mirror / "music").glob("*.MP3"))
+        assert len(prepared) == 1
+        assert (source / "First.mp3").exists()
+        assert (source / "Second.mp3").exists()
+
+
 if __name__ == "__main__":
     test_add_music_ascii_index_for_mp3_stem()
+    test_sync_music_mirror_skips_identical_content_under_different_names()
     print("music index test: OK")
